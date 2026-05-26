@@ -1,32 +1,47 @@
 {
-  description = "note-searcher development environment";
+  description = "note-searcher dev environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    gomod2nix = {
+      url = "github:nix-community/gomod2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, gomod2nix }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-      in
-      {
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ gomod2nix.overlays.default ];
+        };
+      in {
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            git
-            python3
-            # Ensure /dev/shm is available for multiprocessing semaphores
+          packages = with pkgs; [
+            go
+            gomod2nix.packages.${system}.default
+            gopls
+            gotools
+            go-tools
+            govulncheck
+            just
           ];
-          
+
           shellHook = ''
-            echo "🚀 note-searcher dev environment"
-            echo "   Python: $(python3 --version)"
-            echo "   Git: $(git --version)"
-            
-            # Ensure tmpdir has proper permissions for multiprocessing
-            export TMPDIR=''${TMPDIR:-/tmp}
-            mkdir -p "$TMPDIR"
+            echo ""
+            echo "🔧 note-searcher dev environment"
+            echo "   Go:         $(go version | awk '{print $3}')"
+            echo "   gomod2nix:  $(gomod2nix --version 2>/dev/null || echo 'available')"
+            echo ""
+            echo "📋 just targets:"
+            echo "   just build      — compile the binary"
+            echo "   just test       — run tests"
+            echo "   just lint       — staticcheck + govulncheck"
+            echo "   just fmt        — goimports + gofmt"
+            echo "   just gomod2nix  — regenerate gomod2nix.toml"
+            echo ""
           '';
         };
       }
