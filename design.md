@@ -77,12 +77,49 @@ note-searcher search "ingress" --all
 - `--snippet` — include a content excerpt around the match
 - `--all` — include deprecated and superseded notes (hidden by default)
 - `--format=text` — plain text output (default: JSON)
-- Metadata filters: `--status`, `--type`, `--domain`, `--project`, `--scope`, `--confidence`, `--tags`
+- Metadata filters: `--status`, `--type`, `--domain`, `--project`, `--scope`, `--confidence`, `--tags`; repeatable flags for multi-value e.g. `--tags=ingress --tags=tls`
 
 **Default filters (applied unless `--all`):**
 - Hide `status=deprecated`
 - Hide `status=superseded`
 - Hide notes where `superseded-by` is non-empty
+
+---
+
+### `probe`
+
+Probe the search space before committing to a full search. Returns facet counts, all available label values, and suggested filters — no result bodies. Always call this first when query scope is unknown.
+
+```
+note-searcher probe "nginx"
+note-searcher probe "nginx" --tags=ingress
+note-searcher probe --status=verified --domain=kubernetes
+```
+
+**Response:**
+```json
+{
+  "query": { "text": "nginx", "tags": ["ingress"] },
+  "total_matches": 70,
+  "facets": {
+    "status":     { "verified": 31, "inbox": 28, "deprecated": 11 },
+    "confidence": { "high": 22, "medium": 35, "low": 13 },
+    "domain":     { "kubernetes": 45, "networking": 38, "security": 12 },
+    "project":    { "prod-cluster": 29, "staging": 18, "shared": 23 },
+    "tags":       { "ingress": 35, "nginx": 28, "tls": 22, "helm": 14, "rbac": 9 }
+  },
+  "suggested_filters": ["--domain=kubernetes", "--status=verified", "--tags=ingress"]
+}
+```
+- `facets` counts all matches per value for every metadata field, including all `tags` and `domain` values present in the result set — the agent can see exactly what label values exist without guessing
+- `suggested_filters` is a starting point based on result distribution (target: reduce to <15 results); the agent should override or extend it based on task context — e.g. replacing `--tags=ingress` with `--tags=ingress --tags=tls` when the task is specifically about TLS termination
+- `total_matches` includes deprecated/superseded notes so the agent understands the full corpus hit — `search` will still hide them unless `--all` is passed
+- Accepts all the same metadata filter flags as `search` for iterative narrowing
+
+**Intended agent workflow:**
+1. `probe` → see total hits, facet distribution, and available label values (~300 tokens)
+2. If `total_matches` is high, use `suggested_filters` as a base — adjust using facet labels to match task intent
+3. `search` with refined filters + `--limit` → manageable result set
 
 ---
 
@@ -198,7 +235,8 @@ type Indexer interface {
 ## Must-Have (MVP)
 
 - `index` command
-- `search` with full-text + metadata filters + `--snippet`
+- `probe` with facets + `suggested_filters`
+- `search` with full-text + metadata filters + `--snippet` + `--limit`
 - `get` with all modes: default, `--full`, `--metadata-only`, `--titles-only`, `--section`, `--context`
 - Default hiding of deprecated/superseded notes
 - File size classification in search results
