@@ -1,0 +1,50 @@
+{
+  "kubernetes": [
+    "How do I configure pod security policies?",
+    "What's the difference between a Deployment and a StatefulSet?",
+    "How do I expose a service using an Ingress controller?",
+    "How do I set up RBAC for namespace-level access?",
+    "What are the best practices for resource limits and requests?",
+    "How do I use ConfigMaps vs Secrets?",
+    "How do persistent volume claims work?",
+    "What's the lifecycle of a pod?",
+    "How do I implement horizontal pod autoscaling?",
+    "What are init containers used for?"
+  ],
+  "azure": [
+    "How do I configure Azure App Service deployment slots?",
+    "What's the difference between Azure Functions consumption and premium plans?",
+    "How do I set up Azure AD B2C for authentication?",
+    "How do I configure Azure Storage lifecycle management?",
+    "What are the best practices for Azure SQL connection pooling?",
+    "How do I use managed identities in Azure?",
+    "How do I configure Azure Front Door routing?",
+    "What's the difference between Azure Container Instances and Container Apps?",
+    "How do I set up Azure Monitor alerts?",
+    "How do I configure private endpoints for Azure services?"
+  ],
+  "cross_platform": [
+    "How do I implement TLS certificate management?",
+    "What are best practices for container security scanning?",
+    "How do I set up authentication for containerized applications?",
+    "What's the recommended approach for secrets management?",
+    "How do I implement auto-scaling based on CPU metrics?",
+    "What are the options for distributed tracing?",
+    "How do I configure ingress/load balancing with SSL termination?",
+    "What's the best way to handle service-to-service authentication?",
+    "How do I implement rate limiting?",
+    "What are the best practices for logging structured data?"
+  ],
+  "ai_triggers": [
+    "I'm getting a CrashLoopBackOff error in my pod, what should I check?",
+    "My Azure Function is timing out, how do I increase the timeout limit?",
+    "Show me how to configure OAuth2 with Azure AD B2C",
+    "What's the YAML syntax for a Kubernetes network policy?",
+    "How do I migrate from Azure Container Instances to AKS?",
+    "Compare storage options for persistent data in Kubernetes",
+    "What authentication methods does Azure App Service support?",
+    "How do I troubleshoot DNS resolution issues in my cluster?",
+    "Show me an example of a multi-stage deployment in Kubernetes",
+    "What are the quotas and limits for Azure Storage accounts?"
+  ]
+}
