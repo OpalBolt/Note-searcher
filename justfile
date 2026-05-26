@@ -16,7 +16,6 @@ lint:
 
 fmt:
     goimports -w .
-    gofmt -w .
 
 gomod2nix:
     gomod2nix

@@ -27,6 +27,7 @@
             go-tools
             govulncheck
             just
+            git
           ];
 
           shellHook = ''
