@@ -20,7 +20,9 @@ func NewJsonIndexer(indexPath string, pretty bool) *JsonIndexer {
 
 func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 	documents := make(map[string]*DocumentMeta)
-	invertedIndex := make(map[string][]string)
+	docIDToInt := make(map[string]int)
+	docTable := make([]string, 0)
+	invertedIndex := make(map[string][]int)
 	facets := make(map[string]map[string]int)
 
 	// Initialize facet maps
@@ -69,6 +71,14 @@ func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 
 		// Normalize path separators to forward slashes for consistency
 		docID = filepath.ToSlash(docID)
+
+		// Assign integer ID if not yet seen
+		intID, exists := docIDToInt[docID]
+		if !exists {
+			intID = len(docTable)
+			docIDToInt[docID] = intID
+			docTable = append(docTable, docID)
+		}
 
 		// Build DocumentMeta
 		meta := &DocumentMeta{
@@ -119,7 +129,7 @@ func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 				continue
 			}
 			seen[token] = true
-			invertedIndex[token] = append(invertedIndex[token], docID)
+			invertedIndex[token] = append(invertedIndex[token], intID)
 		}
 		// Update facets
 		if meta.Status != "" {
@@ -160,9 +170,10 @@ func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 
 	// Build IndexFile
 	indexFile := &IndexFile{
-		Version:       "1",
+		Version:       IndexVersion,
 		Built:         time.Now(),
 		NotesDir:      notesDir,
+		DocTable:      docTable,
 		Documents:     documents,
 		InvertedIndex: invertedIndex,
 		Facets:        facets,

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const IndexVersion = "2"
+
 // DocumentMeta holds parsed frontmatter + file path
 type DocumentMeta struct {
 	DocID               string   `json:"doc_id"`
@@ -31,9 +33,10 @@ type IndexFile struct {
 	Version       string                    `json:"version"`
 	Built         time.Time                 `json:"built"`
 	NotesDir      string                    `json:"notes_dir"`
-	Documents     map[string]*DocumentMeta  `json:"documents"`      // docID -> meta
-	InvertedIndex map[string][]string       `json:"inverted_index"` // term -> []docID
-	Facets        map[string]map[string]int `json:"facets"`         // field -> value -> count
+	DocTable      []string                  `json:"doc_table"`      // index = integer docID
+	Documents     map[string]*DocumentMeta  `json:"documents"`      // path -> meta
+	InvertedIndex map[string][]int          `json:"inverted_index"` // term -> []int docIDs
+	Facets        map[string]map[string]int `json:"facets"`
 	Stats         IndexStats                `json:"stats"`
 }
 
