@@ -53,10 +53,11 @@ func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 			return fmt.Errorf("read file %s: %w", path, err)
 		}
 
-		// Parse frontmatter
+		// Parse frontmatter — skip files with unparseable YAML rather than aborting
 		fm, body, err := ParseFrontmatter(content)
 		if err != nil {
-			return fmt.Errorf("parse frontmatter %s: %w", path, err)
+			fmt.Fprintf(os.Stderr, "warning: skipping %s: %v\n", path, err)
+			return nil
 		}
 
 		// Generate docID as relative path from notesDir
