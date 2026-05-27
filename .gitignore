@@ -37,3 +37,5 @@ testdata/reference-library/
 # Cached git clones for reference library generation
 testdata/tmp/
 .blip/
+bin/
+testdata/index.json

@@ -5,7 +5,8 @@ default:
     @just --list
 
 build:
-    go build ./...
+    mkdir -p bin
+    go build -o bin/note-searcher ./cmd/note-searcher
 
 test:
     go test ./...
