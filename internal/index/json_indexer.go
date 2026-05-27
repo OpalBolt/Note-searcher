@@ -1,6 +1,7 @@
 package index
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,6 +115,12 @@ func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 				meta.Domain = domainSlice
 			}
 		}
+		// Populate LineCount
+		if len(content) == 0 {
+			meta.LineCount = 0
+		} else {
+			meta.LineCount = bytes.Count(content, []byte("\n")) + 1
+		}
 
 		// Collect text to tokenize: title + body
 		text := fm.Title + " " + body
@@ -221,7 +228,6 @@ func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 func (ji *JsonIndexer) Search(query Query) ([]Result, error) {
 	return nil, errors.New("not implemented")
 }
-
 func (ji *JsonIndexer) Probe(field, value string) ([]string, error) {
 	return nil, errors.New("not implemented")
 }

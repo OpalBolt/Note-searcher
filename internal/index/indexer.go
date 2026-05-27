@@ -26,6 +26,7 @@ type DocumentMeta struct {
 	RequiresHumanReview bool     `json:"requires_human_review,omitempty"`
 	SupersededBy        string   `json:"superseded_by,omitempty"`
 	Tags                []string `json:"tags,omitempty"`
+	LineCount           int      `json:"line_count,omitempty"`
 }
 
 // IndexFile is the on-disk representation
@@ -49,7 +50,8 @@ type IndexStats struct {
 // Query is a placeholder for future search
 type Query struct {
 	Terms  []string
-	Facets map[string]string
+	Facets map[string][]string
+	All    bool
 }
 
 // Result is a placeholder for future search
