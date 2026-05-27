@@ -32,6 +32,7 @@ func init() {
 	rootCmd.PersistentFlags().String("index-path", "./notes/.index.json", "path to write the index file")
 	rootCmd.PersistentFlags().String("index-type", "json", "index file type (json)")
 	rootCmd.PersistentFlags().Int("large-file-threshold", 150, "file size threshold in KB for large file handling")
+	indexCmd.Flags().Bool("pretty", false, "write human-readable indented JSON")
 
 	// Bind flags to viper
 	viper.BindPFlag("notes-dir", rootCmd.PersistentFlags().Lookup("notes-dir"))
@@ -79,9 +80,8 @@ func runIndex(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-
-	// Create indexer
-	indexer := index.NewJsonIndexer(cfg.IndexPath)
+	pretty, _ := cmd.Flags().GetBool("pretty")
+	indexer := index.NewJsonIndexer(cfg.IndexPath, pretty)
 
 	// Build index
 	stats, err := indexer.Build(cfg.NotesDir)

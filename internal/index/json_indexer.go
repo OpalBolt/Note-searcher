@@ -11,10 +11,11 @@ import (
 
 type JsonIndexer struct {
 	IndexPath string
+	Pretty    bool
 }
 
-func NewJsonIndexer(indexPath string) *JsonIndexer {
-	return &JsonIndexer{IndexPath: indexPath}
+func NewJsonIndexer(indexPath string, pretty bool) *JsonIndexer {
+	return &JsonIndexer{IndexPath: indexPath, Pretty: pretty}
 }
 
 func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
@@ -178,9 +179,15 @@ func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 			return IndexStats{}, fmt.Errorf("create index directory: %w", err)
 		}
 	}
+	// Marshal to JSON
+	marshalFn := func(v any) ([]byte, error) {
+		if ji.Pretty {
+			return json.MarshalIndent(v, "", "  ")
+		}
+		return json.Marshal(v)
+	}
 
-	// Marshal to JSON with indent
-	jsonData, err := json.MarshalIndent(indexFile, "", "  ")
+	jsonData, err := marshalFn(indexFile)
 	if err != nil {
 		return IndexStats{}, fmt.Errorf("marshal index: %w", err)
 	}
@@ -188,10 +195,11 @@ func (ji *JsonIndexer) Build(notesDir string) (IndexStats, error) {
 	indexFile.Stats.IndexBytes = int64(len(jsonData))
 
 	// Re-marshal with IndexBytes now set
-	jsonData, err = json.MarshalIndent(indexFile, "", "  ")
+	jsonData, err = marshalFn(indexFile)
 	if err != nil {
 		return IndexStats{}, fmt.Errorf("marshal index: %w", err)
 	}
+
 	// Write to file
 	if err := os.WriteFile(ji.IndexPath, jsonData, 0644); err != nil {
 		return IndexStats{}, fmt.Errorf("write index file: %w", err)
