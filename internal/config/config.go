@@ -5,7 +5,6 @@ import "github.com/spf13/viper"
 type Config struct {
 	NotesDir           string `mapstructure:"notes-dir"`
 	IndexPath          string `mapstructure:"index-path"`
-	IndexType          string `mapstructure:"index-type"`
 	LargeFileThreshold int    `mapstructure:"large-file-threshold"`
 }
 

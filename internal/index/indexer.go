@@ -1,15 +1,7 @@
 package index
 
-import (
-	"encoding/json"
-	"time"
-)
-
-const IndexVersion = "2"
-
-// DocumentMeta holds parsed frontmatter + file path
+// DocumentMeta holds parsed frontmatter + file metadata
 type DocumentMeta struct {
-	DocID               string   `json:"doc_id"`
 	Path                string   `json:"path"`
 	Title               string   `json:"title"`
 	Created             string   `json:"created,omitempty"`
@@ -29,53 +21,30 @@ type DocumentMeta struct {
 	LineCount           int      `json:"line_count,omitempty"`
 }
 
-// IndexFile is the on-disk representation
-type IndexFile struct {
-	Version       string                    `json:"version"`
-	Built         time.Time                 `json:"built"`
-	NotesDir      string                    `json:"notes_dir"`
-	DocTable      []string                  `json:"doc_table"`      // index = integer docID
-	Documents     map[string]*DocumentMeta  `json:"documents"`      // path -> meta
-	InvertedIndex map[string][]int          `json:"inverted_index"` // term -> []int docIDs
-	Facets        map[string]map[string]int `json:"facets"`
-	Stats         IndexStats                `json:"stats"`
-}
-
+// IndexStats reports build outcomes
 type IndexStats struct {
 	FileCount  int   `json:"file_count"`
-	TermCount  int   `json:"term_count"`
-	IndexBytes int64 `json:"index_bytes"`
+	IndexBytes int64 `json:"index_bytes,omitempty"`
 }
 
-// Query is a placeholder for future search
-type Query struct {
-	Terms  []string
-	Facets map[string][]string
-	All    bool
+// SearchResult is a single result returned by Search
+type SearchResult struct {
+	Path    string   `json:"path"`
+	Title   string   `json:"title"`
+	Status  string   `json:"status"`
+	Domain  []string `json:"domain"`
+	Tags    []string `json:"tags"`
+	Size    string   `json:"size"`
+	Snippet string   `json:"snippet,omitempty"`
+	Score   float64  `json:"score,omitempty"`
 }
 
-// Result is a placeholder for future search
-type Result struct {
-	DocID string
-	Score float64
-	Meta  *DocumentMeta
-}
+// FacetCounts maps a field value to its occurrence count
+type FacetCounts map[string]int
 
-// Note is a placeholder for future get
-type Note struct {
-	Meta    *DocumentMeta
-	Content string
-}
-
-// Indexer is the pluggable interface
-type Indexer interface {
-	Build(notesDir string) (IndexStats, error)
-	Search(query Query) ([]Result, error)
-	Probe(field, value string) ([]string, error)
-	Get(path string) (*Note, error)
-}
-
-// UnmarshalIndex unmarshals JSON bytes into an IndexFile struct
-func UnmarshalIndex(data []byte, indexFile *IndexFile) error {
-	return json.Unmarshal(data, indexFile)
+// ProbeResult is returned by Probe
+type ProbeResult struct {
+	Query        string                 `json:"query"`
+	TotalMatches int                    `json:"total_matches"`
+	Facets       map[string]FacetCounts `json:"facets"`
 }
