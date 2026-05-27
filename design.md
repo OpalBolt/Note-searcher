@@ -35,8 +35,46 @@ tags: []
 ## Corpus
 
 - Single root directory, recursive subdirectory support
-- Expected scale: 1,000s of files
+- Expected scale: 10,000s of files
 - Notes directory and index path configured via `.note-searcher.yaml` (see Configuration)
+
+---
+
+## Query Language
+
+All commands that accept a query (`search`, `probe`) use **Bleve query string syntax**. This is the single, unified way to express queries — no separate structured filter flags.
+
+**Examples:**
+
+```
+"error handling"
++golang -deprecated
+title:"error handling" +status:verified
+domain:kubernetes +tags:ingress
++type:pattern +confidence:high domain:golang
+```
+
+**Bleve query string cheatsheet:**
+
+| Syntax | Meaning |
+|---|---|
+| `term` | Match term anywhere in full-text |
+| `+term` | Must include term |
+| `-term` | Must exclude term |
+| `field:value` | Match specific field |
+| `+field:value` | Field must match value |
+| `"phrase query"` | Exact phrase match |
+| `field:val*` | Wildcard/prefix match |
+| `term~` | Fuzzy match |
+
+Metadata fields available for field queries: `title`, `status`, `type`, `scope`, `project`, `domain`, `confidence`, `tags`, `source-agent`, `requires-human-review`.
+
+**Default filters (applied unless explicitly overridden):**
+- Excludes `status:deprecated`
+- Excludes `status:superseded`
+- Excludes notes where `superseded-by` is non-empty
+
+Pass `-status:deprecated` explicitly to override, or use the `--all` flag to disable all default filters.
 
 ---
 
@@ -48,7 +86,7 @@ Build or rebuild the search index from the notes directory.
 
 ```
 note-searcher index
-note-searcher index --notes-dir ./notes --index-path ./notes/.index.json
+note-searcher index --notes-dir ./notes --index-path ./.bleve
 ```
 
 - Runs on demand (scheduled externally, e.g. by an agent or cron)
@@ -58,14 +96,14 @@ note-searcher index --notes-dir ./notes --index-path ./notes/.index.json
 
 ### `search`
 
-Search notes by full-text and/or metadata filters, combinable.
+Search notes using Bleve query string syntax.
 
 ```
 note-searcher search "error handling"
-note-searcher search "error handling" --type=pattern --domain=golang
-note-searcher search --status=verified --project=my-project
-note-searcher search "ingress" --snippet
-note-searcher search "ingress" --all
+note-searcher search "+golang -deprecated"
+note-searcher search 'title:"error handling" domain:golang'
+note-searcher search "+status:verified domain:kubernetes" --snippet
+note-searcher search "+tags:ingress" --all
 ```
 
 **Default output per result:**
@@ -76,30 +114,28 @@ note-searcher search "ingress" --all
 **Flags:**
 - `--snippet` — include a content excerpt around the match
 - `--all` — include deprecated and superseded notes (hidden by default)
+- `--limit` — max results to return
 - `--format=text` — plain text output (default: JSON)
-- Metadata filters: `--status`, `--type`, `--domain`, `--project`, `--scope`, `--confidence`, `--tags`; repeatable flags for multi-value e.g. `--tags=ingress --tags=tls`
-
-**Default filters (applied unless `--all`):**
-- Hide `status=deprecated`
-- Hide `status=superseded`
-- Hide notes where `superseded-by` is non-empty
 
 ---
 
 ### `probe`
 
-Probe the search space before committing to a full search. Returns facet counts, all available label values, and suggested filters — no result bodies. Always call this first when query scope is unknown.
+Probe the search space before committing to a full search. Returns facet counts and all available label values — no result bodies. Always call this first when query scope is unknown.
+
+Accepts the same Bleve query string syntax as `search` — facets are computed over the matching result set, not the whole corpus.
 
 ```
 note-searcher probe "nginx"
-note-searcher probe "nginx" --tags=ingress
-note-searcher probe --status=verified --domain=kubernetes
+note-searcher probe "+nginx +tags:ingress"
+note-searcher probe "+status:verified domain:kubernetes"
 ```
 
 **Response:**
+
 ```json
 {
-  "query": { "text": "nginx", "tags": ["ingress"] },
+  "query": "+nginx +tags:ingress",
   "total_matches": 70,
   "facets": {
     "status":     { "verified": 31, "inbox": 28, "deprecated": 11 },
@@ -107,25 +143,23 @@ note-searcher probe --status=verified --domain=kubernetes
     "domain":     { "kubernetes": 45, "networking": 38, "security": 12 },
     "project":    { "prod-cluster": 29, "staging": 18, "shared": 23 },
     "tags":       { "ingress": 35, "nginx": 28, "tls": 22, "helm": 14, "rbac": 9 }
-  },
-  "suggested_filters": ["--domain=kubernetes", "--status=verified", "--tags=ingress"]
+  }
 }
 ```
-- `facets` counts all matches per value for every metadata field, including all `tags` and `domain` values present in the result set — the agent can see exactly what label values exist without guessing
-- `suggested_filters` is a starting point based on result distribution (target: reduce to <15 results); the agent should override or extend it based on task context — e.g. replacing `--tags=ingress` with `--tags=ingress --tags=tls` when the task is specifically about TLS termination
+
+- `facets` counts all matches per value for every metadata field — the agent can see exactly what label values exist without guessing
 - `total_matches` includes deprecated/superseded notes so the agent understands the full corpus hit — `search` will still hide them unless `--all` is passed
-- Accepts all the same metadata filter flags as `search` for iterative narrowing
 
 **Intended agent workflow:**
-1. `probe` → see total hits, facet distribution, and available label values (~300 tokens)
-2. If `total_matches` is high, use `suggested_filters` as a base — adjust using facet labels to match task intent
-3. `search` with refined filters + `--limit` → manageable result set
+1. `probe "rough query"` → see total hits and facets (~300 tokens)
+2. Refine query using facet data
+3. `search "refined query" --limit 20` → manageable result set
 
 ---
 
 ### `get`
 
-Fetch content from one or more notes by file path. Multiple paths can be provided in a single call — all receive the same mode flag. Returns a JSON array, one entry per file.
+Fetch content from one or more notes by file path. Multiple paths can be provided in a single call — all receive the same mode flag.
 
 ```
 note-searcher get ./notes/golang/error-handling.md
@@ -145,12 +179,12 @@ note-searcher get ./notes/golang/error-handling.md --find "ingress"
 | `--metadata-only` | Frontmatter fields only |
 | `--titles-only` | Heading structure (H1–H6) only |
 | `--section <name>` | Content of a named section (by heading) |
-| `--find <term>` | All sections containing the term (by surrounding headings) |
+| `--find <term>` | All sections containing the term |
 | `--section` + `--find` | Union of both — deduped, ordered by position in file |
 
 **Intended agent workflow:**
 1. `search` → get paths + metadata + size for all matches
-2. `get file1.md file2.md ... --titles-only` → understand structure of relevant files in one call
+2. `get file1.md file2.md ... --titles-only` → understand structure in one call
 3. `batch` with targeted `--section` per file → retrieve only the relevant sections
 
 ---
@@ -165,6 +199,7 @@ cat operations.json | note-searcher batch
 ```
 
 **Input format:**
+
 ```json
 [
   { "path": "notes/a.md", "mode": "section", "arg": "Ingress" },
@@ -175,7 +210,7 @@ cat operations.json | note-searcher batch
 ]
 ```
 
-Input is flat — the same path may appear multiple times with different modes. The tool merges operations for the same file internally, dedupes sections, and returns one result entry per file ordered by position in the file. The agent does not need to handle merging.
+Input is flat — the same path may appear multiple times with different modes. The tool merges operations for the same file internally, dedupes sections, and returns one result entry per file ordered by position in the file.
 
 Returns a JSON array with one entry per unique path, in input order. Errors per file are inline (not fatal) so a single bad path doesn't abort the batch.
 
@@ -184,19 +219,19 @@ Returns a JSON array with one entry per unique path, in input order. Errors per 
 ## Output Format
 
 - Default: JSON
-- `--format=text`: plain text (cheap to implement, no formatting guarantees for agents)
+- `--format=text`: plain text (no formatting guarantees for agents)
 - JSON structure is consistent across all commands
 
 ---
 
 ## Case Sensitivity
 
-All matching is case-insensitive throughout the tool:
+All matching is case-insensitive throughout:
 
-- `search` full-text matching
+- Full-text search
 - `--find <term>` section matching
 - `--section <name>` heading matching
-- All metadata filter values (e.g. `--domain=Golang` matches `domain: golang`)
+- All metadata field values
 
 ---
 
@@ -208,7 +243,7 @@ Config file: `~/.config/<projectname>/config.yaml`. All values overridable by fl
 
 ```yaml
 notes-dir: ./notes
-index-path: ./notes/.index.json
+index-path: ./.bleve
 large-file-threshold: 150   # lines
 ```
 
@@ -216,33 +251,23 @@ large-file-threshold: 150   # lines
 
 ## Index Backend
 
-The index backend is abstracted behind a Go interface, allowing alternative implementations without changing the CLI.
+Bleve (`github.com/blevesearch/bleve/v2`) is the index backend. The index is stored as a directory (default `.bleve/`).
 
-```go
-type Indexer interface {
-    Build(notesDir string) error
-    Search(query Query) ([]Result, error)
-    Get(path string) (*Note, error)
-}
-```
-
-**MVP implementation:** Single JSON file (`.index.json`). Human-readable, no external dependencies, sufficient for 1,000s of files.
-
-**Future backends (nice-to-have):** SQLite, embedded key-value store, etc.
+There is no pluggable backend interface — Bleve is the only implementation.
 
 ---
 
 ## Must-Have (MVP)
 
-- `index` command
-- `probe` with facets + `suggested_filters`
-- `search` with full-text + metadata filters + `--snippet` + `--limit`
-- `get` with all modes: default, `--full`, `--metadata-only`, `--titles-only`, `--section`, `--context`
+- `index` command (Bleve)
+- `search` with Bleve query string syntax + `--snippet` + `--limit` + `--all`
+- `probe` with Bleve query string syntax and facets
+- `get` with all modes: default, `--full`, `--metadata-only`, `--titles-only`, `--section`, `--find`
+- `batch` command
 - Default hiding of deprecated/superseded notes
 - File size classification in search results
 - JSON output + `--format=text`
 - `.note-searcher.yaml` config + flag overrides
-- Pluggable indexer interface with JSON implementation
 
 ## Nice-to-Have (Post-MVP)
 
