@@ -46,7 +46,6 @@ func init() {
 	// Persistent flags available to all subcommands
 	rootCmd.PersistentFlags().String("notes-dir", "./notes", "directory containing markdown notes")
 	rootCmd.PersistentFlags().String("index-path", "./.bleve", "path to the Bleve index directory")
-	rootCmd.PersistentFlags().Int("large-file-threshold", 150, "line count threshold for large file classification")
 
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
@@ -59,7 +58,6 @@ func init() {
 	// Bind persistent flags to viper
 	_ = viper.BindPFlag("notes-dir", rootCmd.PersistentFlags().Lookup("notes-dir"))
 	_ = viper.BindPFlag("index-path", rootCmd.PersistentFlags().Lookup("index-path"))
-	_ = viper.BindPFlag("large-file-threshold", rootCmd.PersistentFlags().Lookup("large-file-threshold"))
 
 	setupViper()
 }
@@ -67,7 +65,6 @@ func init() {
 func setupViper() {
 	viper.SetDefault("notes-dir", "./notes")
 	viper.SetDefault("index-path", "./.bleve")
-	viper.SetDefault("large-file-threshold", 150)
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
@@ -117,20 +114,15 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	format, _ := cmd.Flags().GetString("format")
 	limit, _ := cmd.Flags().GetInt("limit")
 
-	threshold := cfg.LargeFileThreshold
-	if threshold == 0 {
-		threshold = 150
-	}
-
 	indexer := index.NewBleveIndexer(cfg.IndexPath)
-	results, err := indexer.Search(queryStr, all, limit, snippet, threshold)
+	results, err := indexer.Search(queryStr, all, limit, snippet)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
 
 	if format == "text" {
 		for _, r := range results {
-			fmt.Printf("%s\t%s\t%s\t%s\n", r.Path, r.Title, r.Status, r.Size)
+			fmt.Printf("%s\t%s\t%s\t%d\n", r.Path, r.Title, r.Status, r.Chars)
 		}
 		return nil
 	}
@@ -142,12 +134,12 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		Status  string   `json:"status"`
 		Domain  []string `json:"domain"`
 		Tags    []string `json:"tags"`
-		Size    string   `json:"size"`
+		Chars   int      `json:"chars"`
 		Snippet string   `json:"snippet,omitempty"`
 	}
 	out := make([]resultOut, len(results))
 	for i, r := range results {
-		out[i] = resultOut{r.Path, r.Title, r.Status, r.Domain, r.Tags, r.Size, r.Snippet}
+		out[i] = resultOut{r.Path, r.Title, r.Status, r.Domain, r.Tags, r.Chars, r.Snippet}
 	}
 
 	enc := json.NewEncoder(os.Stdout)
