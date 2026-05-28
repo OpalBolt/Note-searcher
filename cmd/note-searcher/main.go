@@ -51,8 +51,10 @@ func init() {
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
 	searchCmd.Flags().Bool("snippet", false, "Include a content excerpt around the match")
+	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 	searchCmd.Flags().String("format", "json", "Output format: json or text")
 	searchCmd.Flags().Int("limit", 0, "Maximum number of results (0 = unlimited)")
+	probeCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 
 	// Bind persistent flags to viper
 	_ = viper.BindPFlag("notes-dir", rootCmd.PersistentFlags().Lookup("notes-dir"))
@@ -133,9 +135,26 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Strip score — output order already reflects relevance ranking
+	type resultOut struct {
+		Path    string   `json:"path"`
+		Title   string   `json:"title"`
+		Status  string   `json:"status"`
+		Domain  []string `json:"domain"`
+		Tags    []string `json:"tags"`
+		Size    string   `json:"size"`
+		Snippet string   `json:"snippet,omitempty"`
+	}
+	out := make([]resultOut, len(results))
+	for i, r := range results {
+		out[i] = resultOut{r.Path, r.Title, r.Status, r.Domain, r.Tags, r.Size, r.Snippet}
+	}
+
 	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(results)
+	if pretty, _ := cmd.Flags().GetBool("pretty"); pretty {
+		enc.SetIndent("", "  ")
+	}
+	return enc.Encode(out)
 }
 
 func runProbe(cmd *cobra.Command, args []string) error {
@@ -156,7 +175,9 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	}
 
 	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
+	if pretty, _ := cmd.Flags().GetBool("pretty"); pretty {
+		enc.SetIndent("", "  ")
+	}
 	return enc.Encode(result)
 }
 
