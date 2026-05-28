@@ -1,7 +1,6 @@
 package index
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,7 +54,7 @@ func buildMapping() mapping.IndexMapping {
 	dm.AddFieldMappingsAt("superseded_by", keywordField)
 	dm.AddFieldMappingsAt("requires_human_review", boolField)
 	dm.AddFieldMappingsAt("is_superseded", boolField)
-	dm.AddFieldMappingsAt("line_count", numericField)
+	dm.AddFieldMappingsAt("chars", numericField)
 
 	im.DefaultMapping = dm
 	return im
@@ -96,10 +95,7 @@ func (b *BleveIndexer) Build(notesDir string) (IndexStats, error) {
 			return nil
 		}
 
-		lineCount := 0
-		if len(content) > 0 {
-			lineCount = bytes.Count(content, []byte("\n")) + 1
-		}
+		charCount := len([]rune(string(content)))
 
 		var domain []string
 		if fm.Domain != nil {
@@ -133,7 +129,7 @@ func (b *BleveIndexer) Build(notesDir string) (IndexStats, error) {
 			"superseded_by":         fm.SupersededBy,
 			"requires_human_review": fm.RequiresHumanReview,
 			"is_superseded":         isSuperseded,
-			"line_count":            float64(lineCount),
+			"chars":                 float64(charCount),
 		}
 
 		docID, err := filepath.Rel(notesDir, path)
@@ -178,7 +174,7 @@ func (b *BleveIndexer) Build(notesDir string) (IndexStats, error) {
 
 // Search executes a Bleve query string. Unless all=true, deprecated and superseded
 // notes are excluded by default.
-func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag bool, threshold int) ([]SearchResult, error) {
+func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag bool) ([]SearchResult, error) {
 	idx, err := bleve.Open(b.IndexPath)
 	if err != nil {
 		return nil, fmt.Errorf("open bleve index: %w", err)
@@ -193,7 +189,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 	}
 
 	req := bleve.NewSearchRequestOptions(q, size, 0, false)
-	req.Fields = []string{"path", "title", "status", "domain", "tags", "line_count"}
+	req.Fields = []string{"path", "title", "status", "domain", "tags", "chars"}
 	if snippetFlag {
 		req.Highlight = bleve.NewHighlight()
 		req.Fields = append(req.Fields, "body")
@@ -211,12 +207,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		status := fieldString(hit.Fields["status"])
 		domain := fieldStringSlice(hit.Fields["domain"])
 		tags := fieldStringSlice(hit.Fields["tags"])
-		lineCount := fieldInt(hit.Fields["line_count"])
-
-		sizeClass := "small"
-		if lineCount > threshold {
-			sizeClass = "large"
-		}
+		charCount := fieldInt(hit.Fields["chars"])
 
 		var snippet string
 		if snippetFlag && hit.Fragments != nil {
@@ -234,7 +225,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 			Status:  status,
 			Domain:  domain,
 			Tags:    tags,
-			Size:    sizeClass,
+			Chars:   charCount,
 			Snippet: snippet,
 			Score:   hit.Score,
 		})

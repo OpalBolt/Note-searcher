@@ -34,7 +34,7 @@ type SearchResult struct {
 	Status  string   `json:"status"`
 	Domain  []string `json:"domain"`
 	Tags    []string `json:"tags"`
-	Size    string   `json:"size"`
+	Chars   int      `json:"chars"`
 	Snippet string   `json:"snippet,omitempty"`
 	Score   float64  `json:"score,omitempty"`
 }

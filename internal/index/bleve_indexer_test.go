@@ -80,7 +80,6 @@ domain:
 this note is verified but has been superseded`,
 	}
 
-
 	// Write test files
 	for filename, content := range testFiles {
 		path := filepath.Join(notesDir, filename)
@@ -105,7 +104,7 @@ this note is verified but has been superseded`,
 
 	t.Run("search_error_default_filter", func(t *testing.T) {
 		// Search "error" with default filter should hide deprecated/superseded
-		results, err := indexer.Search("error", false, 0, false, 150)
+		results, err := indexer.Search("error", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
@@ -120,7 +119,7 @@ this note is verified but has been superseded`,
 
 	t.Run("search_golang_all_flag", func(t *testing.T) {
 		// Search "golang" with all=true should include deprecated
-		results, err := indexer.Search("golang", true, 0, false, 150)
+		results, err := indexer.Search("golang", true, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
@@ -139,7 +138,7 @@ this note is verified but has been superseded`,
 
 	t.Run("search_empty_default_filter", func(t *testing.T) {
 		// Empty search with default filter should get verified and inbox
-		results, err := indexer.Search("", false, 0, false, 150)
+		results, err := indexer.Search("", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
@@ -190,7 +189,7 @@ this note is verified but has been superseded`,
 
 	t.Run("search_field_query", func(t *testing.T) {
 		// Search with field query domain:kubernetes default filter
-		results, err := indexer.Search("domain:kubernetes", false, 0, false, 150)
+		results, err := indexer.Search("domain:kubernetes", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
@@ -213,7 +212,7 @@ this note is verified but has been superseded`,
 
 	t.Run("search_superseded_by_filter", func(t *testing.T) {
 		// note6 has status:verified but superseded-by set — must be hidden by default filter
-		results, err := indexer.Search("superseded", false, 0, false, 150)
+		results, err := indexer.Search("superseded", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
@@ -224,10 +223,9 @@ this note is verified but has been superseded`,
 		}
 	})
 
-
 	t.Run("search_snippet", func(t *testing.T) {
 		// Search with snippet flag
-		results, err := indexer.Search("error", false, 0, true, 150)
+		results, err := indexer.Search("error", false, 0, true)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
@@ -242,7 +240,7 @@ this note is verified but has been superseded`,
 
 	t.Run("search_limit", func(t *testing.T) {
 		// Test limit parameter
-		results, err := indexer.Search("", false, 2, false, 150)
+		results, err := indexer.Search("", false, 2, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
@@ -252,22 +250,21 @@ this note is verified but has been superseded`,
 		}
 	})
 
-	t.Run("size_classification", func(t *testing.T) {
-		// Check size classification based on threshold
-		results, err := indexer.Search("", false, 0, false, 5) // Very low threshold
+	t.Run("chars", func(t *testing.T) {
+		// Check that chars field is populated for results
+		results, err := indexer.Search("", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
 
-		// Most test files should be classified as "large" with a 5-line threshold
-		largeCount := 0
+		// All results should have Chars > 0
 		for _, r := range results {
-			if r.Size == "large" {
-				largeCount++
+			if r.Chars <= 0 {
+				t.Errorf("expected Chars > 0, got %d for %s", r.Chars, r.Path)
 			}
 		}
-		if largeCount == 0 {
-			t.Logf("warning: expected some files to be classified as large with threshold=5")
+		if len(results) == 0 {
+			t.Logf("warning: no results returned")
 		}
 	})
 }

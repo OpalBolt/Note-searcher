@@ -3,9 +3,8 @@ package config
 import "github.com/spf13/viper"
 
 type Config struct {
-	NotesDir           string `mapstructure:"notes-dir"`
-	IndexPath          string `mapstructure:"index-path"`
-	LargeFileThreshold int    `mapstructure:"large-file-threshold"`
+	NotesDir  string `mapstructure:"notes-dir"`
+	IndexPath string `mapstructure:"index-path"`
 }
 
 // Load reads configuration from viper and returns a Config struct
