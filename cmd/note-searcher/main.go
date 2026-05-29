@@ -131,13 +131,14 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	score, _ := cmd.Flags().GetBool("score")
 
 	indexer := index.NewBleveIndexer(cfg.IndexPath)
-	results, err := indexer.Search(queryStr, all, limit, snippet)
+	resp, err := indexer.Search(queryStr, all, limit, snippet)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
 
 	if format == "text" {
-		for _, r := range results {
+		fmt.Printf("Showing %d of %d results\n", resp.Shown, resp.Total)
+		for _, r := range resp.Results {
 			if score {
 				fmt.Printf("%s\t%s\t%s\t%d\t%.4f\n", r.Path, r.Title, r.Status, r.Chars, r.Score)
 			} else {
@@ -157,18 +158,33 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		Chars   int      `json:"chars"`
 		Snippet string   `json:"snippet,omitempty"`
 	}
+	
+	// searchOut wraps search results with metadata about the query.
+	// Used when --score=false to exclude scores
+	
 	enc := json.NewEncoder(os.Stdout)
 	if pretty, _ := cmd.Flags().GetBool("pretty"); pretty {
 		enc.SetIndent("", "  ")
 	}
 	if score {
-		// Encode SearchResult directly to include score
-		return enc.Encode(results)
+		// Encode SearchResponse directly to include score
+		return enc.Encode(resp)
 	}
-	// Encode without score
-	out := make([]resultOut, len(results))
-	for i, r := range results {
-		out[i] = resultOut{r.Path, r.Title, r.Status, r.Domain, r.Tags, r.Chars, r.Snippet}
+	// Encode without score - build a wrapper with stripped results
+	type searchOut struct {
+		Total   int         `json:"total"`
+		Shown   int         `json:"shown"`
+		Query   string      `json:"query"`
+		Results []resultOut `json:"results"`
+	}
+	out := searchOut{
+		Total:   resp.Total,
+		Shown:   resp.Shown,
+		Query:   resp.Query,
+		Results: make([]resultOut, len(resp.Results)),
+	}
+	for i, r := range resp.Results {
+		out.Results[i] = resultOut{Path: r.Path, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet}
 	}
 	return enc.Encode(out)
 }

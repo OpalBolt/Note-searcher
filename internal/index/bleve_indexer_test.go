@@ -104,31 +104,31 @@ this note is verified but has been superseded`,
 
 	t.Run("search_error_default_filter", func(t *testing.T) {
 		// Search "error" with default filter should hide deprecated/superseded
-		results, err := indexer.Search("error", false, 0, false)
+		resp, err := indexer.Search("error", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-
-		if len(results) != 1 {
-			t.Errorf("expected 1 result, got %d", len(results))
+		
+		if len(resp.Results) != 1 {
+			t.Errorf("expected 1 result, got %d", len(resp.Results))
 		}
-		if len(results) > 0 && results[0].Path != "note1.md" {
-			t.Errorf("expected note1.md, got %s", results[0].Path)
+		if len(resp.Results) > 0 && resp.Results[0].Path != "note1.md" {
+			t.Errorf("expected note1.md, got %s", resp.Results[0].Path)
 		}
 	})
 
 	t.Run("search_golang_all_flag", func(t *testing.T) {
 		// Search "golang" with all=true should include deprecated
-		results, err := indexer.Search("golang", true, 0, false)
+		resp, err := indexer.Search("golang", true, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-
-		if len(results) != 3 {
-			t.Errorf("expected 3 results, got %d", len(results))
+		
+		if len(resp.Results) != 3 {
+			t.Errorf("expected 3 results, got %d", len(resp.Results))
 		}
 		paths := make(map[string]bool)
-		for _, r := range results {
+		for _, r := range resp.Results {
 			paths[r.Path] = true
 		}
 		if !paths["note1.md"] || !paths["note2.md"] || !paths["note6.md"] {
@@ -138,16 +138,16 @@ this note is verified but has been superseded`,
 
 	t.Run("search_empty_default_filter", func(t *testing.T) {
 		// Empty search with default filter should get verified and inbox
-		results, err := indexer.Search("", false, 0, false)
+		resp, err := indexer.Search("", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-
-		if len(results) != 3 {
-			t.Errorf("expected 3 results, got %d", len(results))
+		
+		if len(resp.Results) != 3 {
+			t.Errorf("expected 3 results, got %d", len(resp.Results))
 		}
 		paths := make(map[string]bool)
-		for _, r := range results {
+		for _, r := range resp.Results {
 			paths[r.Path] = true
 		}
 		if !paths["note1.md"] || !paths["note3.md"] || !paths["note4.md"] {
@@ -189,17 +189,17 @@ this note is verified but has been superseded`,
 
 	t.Run("search_field_query", func(t *testing.T) {
 		// Search with field query domain:kubernetes default filter
-		results, err := indexer.Search("domain:kubernetes", false, 0, false)
+		resp, err := indexer.Search("domain:kubernetes", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-
+		
 		// Should get note3 and note4 (not note5 due to superseded filter)
-		if len(results) != 2 {
-			t.Errorf("expected 2 results, got %d", len(results))
+		if len(resp.Results) != 2 {
+			t.Errorf("expected 2 results, got %d", len(resp.Results))
 		}
 		paths := make(map[string]bool)
-		for _, r := range results {
+		for _, r := range resp.Results {
 			paths[r.Path] = true
 		}
 		if !paths["note3.md"] || !paths["note4.md"] {
@@ -212,11 +212,11 @@ this note is verified but has been superseded`,
 
 	t.Run("search_superseded_by_filter", func(t *testing.T) {
 		// note6 has status:verified but superseded-by set — must be hidden by default filter
-		results, err := indexer.Search("superseded", false, 0, false)
+		resp, err := indexer.Search("superseded", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		for _, r := range results {
+		for _, r := range resp.Results {
 			if r.Path == "note6.md" {
 				t.Errorf("note6.md has superseded-by set and should be hidden by default filter")
 			}
@@ -225,64 +225,74 @@ this note is verified but has been superseded`,
 
 	t.Run("search_snippet", func(t *testing.T) {
 		// Search with snippet flag
-		results, err := indexer.Search("error", false, 0, true)
+		resp, err := indexer.Search("error", false, 0, true)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-
-		if len(results) != 1 {
-			t.Errorf("expected 1 result, got %d", len(results))
+		
+		if len(resp.Results) != 1 {
+			t.Errorf("expected 1 result, got %d", len(resp.Results))
 		}
-		if len(results) > 0 && results[0].Snippet == "" {
+		if len(resp.Results) > 0 && resp.Results[0].Snippet == "" {
 			t.Logf("note: snippet may be empty depending on Bleve highlight behavior")
 		}
 	})
 
 	t.Run("search_limit", func(t *testing.T) {
 		// Test limit parameter
-		results, err := indexer.Search("", false, 2, false)
+		resp, err := indexer.Search("", false, 2, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-
-		if len(results) > 2 {
-			t.Errorf("expected at most 2 results with limit=2, got %d", len(results))
+		
+		if len(resp.Results) > 2 {
+			t.Errorf("expected at most 2 results with limit=2, got %d", len(resp.Results))
+		}
+		// Verify metadata fields
+		if resp.Shown != len(resp.Results) {
+			t.Errorf("expected resp.Shown (%d) to equal len(resp.Results) (%d)", resp.Shown, len(resp.Results))
+		}
+		if resp.Total < resp.Shown {
+			t.Errorf("expected resp.Total (%d) >= resp.Shown (%d)", resp.Total, resp.Shown)
+		}
+		if resp.Query != "" {
+			t.Errorf("expected resp.Query to be empty string, got %q", resp.Query)
 		}
 	})
 
 	t.Run("chars", func(t *testing.T) {
 		// Check that chars field is populated for results
-		results, err := indexer.Search("", false, 0, false)
+		resp, err := indexer.Search("", false, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-
+		
 		// All results should have Chars > 0
-		for _, r := range results {
+		for _, r := range resp.Results {
 			if r.Chars <= 0 {
 				t.Errorf("expected Chars > 0, got %d for %s", r.Chars, r.Path)
 			}
 		}
-		if len(results) == 0 {
+		if len(resp.Results) == 0 {
 			t.Logf("warning: no results returned")
 		}
 	})
 	
 	t.Run("search_score_order", func(t *testing.T) {
 		// Search "golang" to get multiple results with different relevance scores
-		results, err := indexer.Search("golang", true, 0, false)
+		resp, err := indexer.Search("golang", true, 0, false)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
 		
-		if len(results) < 2 {
-			t.Errorf("expected at least 2 results to verify score order, got %d", len(results))
+		if len(resp.Results) < 2 {
+			t.Errorf("expected at least 2 results to verify score order, got %d", len(resp.Results))
 		}
 		
 		// Verify that scores are in descending order
-		for i := 1; i < len(results); i++ {
-			if results[i-1].Score < results[i].Score {
-				t.Errorf("score order violation: result %d (score %.4f) should be >= result %d (score %.4f)", i-1, results[i-1].Score, i, results[i].Score)
+		for i := 1; i < len(resp.Results); i++ {
+			if resp.Results[i-1].Score < resp.Results[i].Score {
+				t.Errorf("score order violation: result %d (score %.4f) should be >= result %d (score %.4f)", i-1, resp.Results[i-1].Score, i, resp.Results[i].Score)
 			}
 		}
 	})
