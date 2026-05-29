@@ -38,10 +38,18 @@ var probeCmd = &cobra.Command{
 	RunE:  runProbe,
 }
 
+var getCmd = &cobra.Command{
+	Use:   "get <path>...",
+	Short: "Retrieve note content by file path",
+	Args:  cobra.MinimumNArgs(1),
+	RunE:  runGet,
+}
+
 func init() {
 	rootCmd.AddCommand(indexCmd)
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.AddCommand(probeCmd)
+	rootCmd.AddCommand(getCmd)
 
 	// Persistent flags available to all subcommands
 	rootCmd.PersistentFlags().String("notes-dir", "./notes", "directory containing markdown notes")
@@ -54,6 +62,12 @@ func init() {
 	searchCmd.Flags().String("format", "json", "Output format: json or text")
 	searchCmd.Flags().Int("limit", 0, "Maximum number of results (0 = unlimited)")
 	probeCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
+
+	// get-specific flags
+	getCmd.Flags().Bool("full", false, "Return frontmatter + body")
+	getCmd.Flags().Bool("metadata-only", false, "Return frontmatter fields only (no body)")
+	getCmd.Flags().Bool("pretty", false, "Pretty-print JSON output")
+	getCmd.Flags().String("format", "json", "Output format: json or text")
 
 	// Bind persistent flags to viper
 	_ = viper.BindPFlag("notes-dir", rootCmd.PersistentFlags().Lookup("notes-dir"))
@@ -171,6 +185,79 @@ func runProbe(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 	}
 	return enc.Encode(result)
+}
+func runGet(cmd *cobra.Command, args []string) error {
+	full, _ := cmd.Flags().GetBool("full")
+	metadataOnly, _ := cmd.Flags().GetBool("metadata-only")
+	pretty, _ := cmd.Flags().GetBool("pretty")
+	format, _ := cmd.Flags().GetString("format")
+
+	if full && metadataOnly {
+		return fmt.Errorf("--full and --metadata-only are mutually exclusive")
+	}
+
+	type getResult struct {
+		Path     string             `json:"path"`
+		Content  string             `json:"content,omitempty"`
+		Metadata *index.Frontmatter `json:"metadata,omitempty"`
+		Error    string             `json:"error,omitempty"`
+	}
+
+	results := make([]getResult, 0, len(args))
+
+	for _, path := range args {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			errMsg := err.Error()
+			if os.IsNotExist(err) {
+				errMsg = "file not found"
+			}
+			results = append(results, getResult{Path: path, Error: errMsg})
+			continue
+		}
+
+		fm, body, err := index.ParseFrontmatter(raw)
+		if err != nil {
+			results = append(results, getResult{Path: path, Error: fmt.Sprintf("parse error: %v", err)})
+			continue
+		}
+
+		var r getResult
+		r.Path = path
+		switch {
+		case metadataOnly:
+			r.Metadata = &fm
+		case full:
+			r.Content = body
+			r.Metadata = &fm
+		default:
+			r.Content = body
+		}
+		results = append(results, r)
+	}
+
+	if format == "text" {
+		for _, r := range results {
+			if r.Error != "" {
+				fmt.Fprintf(os.Stderr, "error: %s: %s\n", r.Path, r.Error)
+				continue
+			}
+			if metadataOnly {
+				enc := json.NewEncoder(os.Stdout)
+				fmt.Fprintf(os.Stdout, "%s\t", r.Path)
+				_ = enc.Encode(r.Metadata)
+			} else {
+				fmt.Printf("%s\t%s\n", r.Path, r.Content)
+			}
+		}
+		return nil
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	if pretty {
+		enc.SetIndent("", "  ")
+	}
+	return enc.Encode(results)
 }
 
 func main() {
