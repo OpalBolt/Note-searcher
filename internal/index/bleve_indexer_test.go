@@ -267,4 +267,23 @@ this note is verified but has been superseded`,
 			t.Logf("warning: no results returned")
 		}
 	})
+	
+	t.Run("search_score_order", func(t *testing.T) {
+		// Search "golang" to get multiple results with different relevance scores
+		results, err := indexer.Search("golang", true, 0, false)
+		if err != nil {
+			t.Fatalf("search failed: %v", err)
+		}
+		
+		if len(results) < 2 {
+			t.Errorf("expected at least 2 results to verify score order, got %d", len(results))
+		}
+		
+		// Verify that scores are in descending order
+		for i := 1; i < len(results); i++ {
+			if results[i-1].Score < results[i].Score {
+				t.Errorf("score order violation: result %d (score %.4f) should be >= result %d (score %.4f)", i-1, results[i-1].Score, i, results[i].Score)
+			}
+		}
+	})
 }

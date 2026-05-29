@@ -58,9 +58,10 @@ func init() {
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
 	searchCmd.Flags().Bool("snippet", false, "Include a content excerpt around the match")
+	searchCmd.Flags().Bool("score", false, "Include relevance score in output")
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 	searchCmd.Flags().String("format", "json", "Output format: json or text")
-	searchCmd.Flags().Int("limit", 0, "Maximum number of results (0 = unlimited)")
+	searchCmd.Flags().Int("limit", 0, "top N results by relevance score (0 = no limit)")
 	probeCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 
 	// get-specific flags
@@ -127,6 +128,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	snippet, _ := cmd.Flags().GetBool("snippet")
 	format, _ := cmd.Flags().GetString("format")
 	limit, _ := cmd.Flags().GetInt("limit")
+	score, _ := cmd.Flags().GetBool("score")
 
 	indexer := index.NewBleveIndexer(cfg.IndexPath)
 	results, err := indexer.Search(queryStr, all, limit, snippet)
@@ -136,7 +138,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	if format == "text" {
 		for _, r := range results {
-			fmt.Printf("%s\t%s\t%s\t%d\n", r.Path, r.Title, r.Status, r.Chars)
+			if score {
+				fmt.Printf("%s\t%s\t%s\t%d\t%.4f\n", r.Path, r.Title, r.Status, r.Chars, r.Score)
+			} else {
+				fmt.Printf("%s\t%s\t%s\t%d\n", r.Path, r.Title, r.Status, r.Chars)
+			}
 		}
 		return nil
 	}
@@ -151,14 +157,18 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		Chars   int      `json:"chars"`
 		Snippet string   `json:"snippet,omitempty"`
 	}
-	out := make([]resultOut, len(results))
-	for i, r := range results {
-		out[i] = resultOut{r.Path, r.Title, r.Status, r.Domain, r.Tags, r.Chars, r.Snippet}
-	}
-
 	enc := json.NewEncoder(os.Stdout)
 	if pretty, _ := cmd.Flags().GetBool("pretty"); pretty {
 		enc.SetIndent("", "  ")
+	}
+	if score {
+		// Encode SearchResult directly to include score
+		return enc.Encode(results)
+	}
+	// Encode without score
+	out := make([]resultOut, len(results))
+	for i, r := range results {
+		out[i] = resultOut{r.Path, r.Title, r.Status, r.Domain, r.Tags, r.Chars, r.Snippet}
 	}
 	return enc.Encode(out)
 }
