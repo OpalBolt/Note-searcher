@@ -216,9 +216,8 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 
 		var snippet string
 		if snippetFlag {
-			if frags := hit.Fragments["body"]; len(frags) > 0 {
-				snippet = centreSnippet(frags[0], snippetSize)
-			}
+			body := fieldString(hit.Fields["body"])
+			snippet = buildSnippets(body, hit.Fragments["body"], snippetSize)
 		}
 
 		results = append(results, SearchResult{
@@ -240,32 +239,11 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 	}, nil
 }
 
-// centreSnippet centres a Bleve HTML fragment around the first matched term
-// (wrapped in <mark>…</mark>) and truncates to size runes. If no mark is found,
-// the first size runes are returned.
-func centreSnippet(fragment string, size int) string {
-	if size <= 0 {
-		size = 150
-	}
-	// Find position of first <mark> tag
-	markStart := strings.Index(fragment, "<mark>")
-
-	// Strip all HTML tags and Bleve's ellipsis separators to get plain text
-	plain := strings.ReplaceAll(stripTags(fragment), "\u2026", "")
-	runes := []rune(plain)
-
-	var centre int
-	if markStart >= 0 {
-		// Count runes in the plain text up to the <mark> position
-		// We need to find how many runes precede the match in the plain text
-		beforeMark := stripTags(fragment[:markStart])
-		centre = len([]rune(beforeMark))
-	}
-
+// extractWindow returns a string of up to size runes centred on centre within runes.
+func extractWindow(runes []rune, centre, size int) string {
 	if len(runes) <= size {
-		return plain
+		return string(runes)
 	}
-
 	half := size / 2
 	start := centre - half
 	if start < 0 {
@@ -280,6 +258,86 @@ func centreSnippet(fragment string, size int) string {
 		}
 	}
 	return string(runes[start:end])
+}
+
+// findMatchCentre returns the rune offset of a matched term within body, using
+// the Bleve HTML fragment to identify which occurrence and where in the text.
+// Falls back to 0 if the mark or the term cannot be located.
+func findMatchCentre(body, fragment string) int {
+	markStart := strings.Index(fragment, "<mark>")
+	if markStart < 0 {
+		return 0
+	}
+	markEnd := strings.Index(fragment, "</mark>")
+	if markEnd < markStart {
+		return 0
+	}
+
+	term := fragment[markStart+len("<mark>") : markEnd]
+	if term == "" {
+		return 0
+	}
+
+	// Use the plain-text prefix before <mark> (≥5 chars) to pinpoint the
+	// right occurrence of the term when it appears multiple times in the body.
+	prefix := strings.TrimSpace(strings.ReplaceAll(stripTags(fragment[:markStart]), "\u2026", ""))
+	if len([]rune(prefix)) >= 5 {
+		if idx := strings.Index(body, prefix); idx >= 0 {
+			return len([]rune(body[:idx+len(prefix)]))
+		}
+	}
+
+	// Fallback: first occurrence of the term (case-insensitive)
+	idx := strings.Index(strings.ToLower(body), strings.ToLower(term))
+	if idx < 0 {
+		return 0
+	}
+	return len([]rune(body[:idx]))
+}
+
+// buildSnippets extracts one size-rune window per unique match location from
+// body, using Bleve fragments to locate the matches. Overlapping windows
+// (within size runes of a prior centre) are merged by skipping. Windows are
+// joined with " ... ".
+func buildSnippets(body string, fragments []string, size int) string {
+	if size <= 0 {
+		size = 150
+	}
+	if body == "" || len(fragments) == 0 {
+		runes := []rune(body)
+		return extractWindow(runes, 0, size)
+	}
+
+	bodyRunes := []rune(body)
+	var windows []string
+	var usedCentres []int
+
+	for _, frag := range fragments {
+		centre := findMatchCentre(body, frag)
+
+		// Skip if this window would substantially overlap an existing one
+		overlaps := false
+		for _, used := range usedCentres {
+			diff := centre - used
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff < size {
+				overlaps = true
+				break
+			}
+		}
+		if overlaps {
+			continue
+		}
+		usedCentres = append(usedCentres, centre)
+		windows = append(windows, extractWindow(bodyRunes, centre, size))
+	}
+
+	if len(windows) == 0 {
+		return extractWindow(bodyRunes, 0, size)
+	}
+	return strings.Join(windows, " ... ")
 }
 
 // stripTags removes HTML tags from s. Only sequences of the form <letter...>,
