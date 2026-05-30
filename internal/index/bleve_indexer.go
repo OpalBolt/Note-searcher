@@ -215,12 +215,9 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		charCount := fieldInt(hit.Fields["chars"])
 
 		var snippet string
-		if snippetFlag && hit.Fragments != nil {
-			for _, frags := range hit.Fragments {
-				if len(frags) > 0 {
-					snippet = centreSnippet(frags[0], snippetSize)
-					break
-				}
+		if snippetFlag {
+			if frags := hit.Fragments["body"]; len(frags) > 0 {
+				snippet = centreSnippet(frags[0], snippetSize)
 			}
 		}
 
@@ -253,8 +250,8 @@ func centreSnippet(fragment string, size int) string {
 	// Find position of first <mark> tag
 	markStart := strings.Index(fragment, "<mark>")
 
-	// Strip all HTML tags to get plain text
-	plain := stripTags(fragment)
+	// Strip all HTML tags and Bleve's ellipsis separators to get plain text
+	plain := strings.ReplaceAll(stripTags(fragment), "\u2026", "")
 	runes := []rune(plain)
 
 	var centre int
