@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	bleve "github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
@@ -174,7 +175,7 @@ func (b *BleveIndexer) Build(notesDir string) (IndexStats, error) {
 
 // Search executes a Bleve query string. Unless all=true, deprecated and superseded
 // notes are excluded by default.
-func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag bool) (SearchResponse, error) {
+func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag bool, snippetSize int) (SearchResponse, error) {
 	idx, err := bleve.Open(b.IndexPath)
 	if err != nil {
 		return SearchResponse{}, fmt.Errorf("open bleve index: %w", err)
@@ -192,6 +193,8 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 	req.Fields = []string{"path", "title", "status", "domain", "tags", "chars"}
 	if snippetFlag {
 		req.Highlight = bleve.NewHighlight()
+		htmlStyle := "html"
+		req.Highlight.Style = &htmlStyle
 		req.Fields = append(req.Fields, "body")
 	}
 
@@ -213,7 +216,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		if snippetFlag && hit.Fragments != nil {
 			for _, frags := range hit.Fragments {
 				if len(frags) > 0 {
-					snippet = frags[0]
+					snippet = centreSnippet(frags[0], snippetSize)
 					break
 				}
 			}
@@ -236,6 +239,78 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		Query:   queryStr,
 		Results: results,
 	}, nil
+}
+
+// centreSnippet centres a Bleve HTML fragment around the first matched term
+// (wrapped in <mark>…</mark>) and truncates to size runes. If no mark is found,
+// the first size runes are returned.
+func centreSnippet(fragment string, size int) string {
+	if size <= 0 {
+		size = 150
+	}
+	// Find position of first <mark> tag
+	markStart := strings.Index(fragment, "<mark>")
+
+	// Strip all HTML tags to get plain text
+	plain := stripTags(fragment)
+	runes := []rune(plain)
+
+	var centre int
+	if markStart >= 0 {
+		// Count runes in the plain text up to the <mark> position
+		// We need to find how many runes precede the match in the plain text
+		beforeMark := stripTags(fragment[:markStart])
+		centre = len([]rune(beforeMark))
+	}
+
+	if len(runes) <= size {
+		return plain
+	}
+
+	half := size / 2
+	start := centre - half
+	if start < 0 {
+		start = 0
+	}
+	end := start + size
+	if end > len(runes) {
+		end = len(runes)
+		start = end - size
+		if start < 0 {
+			start = 0
+		}
+	}
+	return string(runes[start:end])
+}
+
+// stripTags removes HTML tags from s. Only sequences of the form <letter...>,
+// </...>, or <!...> are treated as tags; bare < characters are preserved.
+func stripTags(s string) string {
+	var b strings.Builder
+	for len(s) > 0 {
+		ltIdx := strings.IndexByte(s, '<')
+		if ltIdx < 0 {
+			b.WriteString(s)
+			break
+		}
+		b.WriteString(s[:ltIdx])
+		rest := s[ltIdx+1:]
+		// Only strip if it looks like an HTML tag
+		if len(rest) > 0 && (rest[0] == '/' ||
+			(rest[0] >= 'a' && rest[0] <= 'z') ||
+			(rest[0] >= 'A' && rest[0] <= 'Z') ||
+			rest[0] == '!') {
+			gtIdx := strings.IndexByte(rest, '>')
+			if gtIdx >= 0 {
+				s = rest[gtIdx+1:]
+				continue
+			}
+		}
+		// Not a tag — emit the '<' and continue
+		b.WriteByte('<')
+		s = rest
+	}
+	return b.String()
 }
 
 // Probe executes a query and returns facet counts over the matching result set.

@@ -58,6 +58,7 @@ func init() {
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
 	searchCmd.Flags().Bool("snippet", false, "Include a content excerpt around the match")
+	searchCmd.Flags().Int("snippet-size", 150, "Snippet length in characters (used with --snippet)")
 	searchCmd.Flags().Bool("score", false, "Include relevance score in output")
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 	searchCmd.Flags().String("format", "json", "Output format: json or text")
@@ -126,12 +127,13 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	all, _ := cmd.Flags().GetBool("all")
 	snippet, _ := cmd.Flags().GetBool("snippet")
+	snippetSize, _ := cmd.Flags().GetInt("snippet-size")
 	format, _ := cmd.Flags().GetString("format")
 	limit, _ := cmd.Flags().GetInt("limit")
 	score, _ := cmd.Flags().GetBool("score")
 
 	indexer := index.NewBleveIndexer(cfg.IndexPath)
-	resp, err := indexer.Search(queryStr, all, limit, snippet)
+	resp, err := indexer.Search(queryStr, all, limit, snippet, snippetSize)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
@@ -158,10 +160,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		Chars   int      `json:"chars"`
 		Snippet string   `json:"snippet,omitempty"`
 	}
-	
+
 	// searchOut wraps search results with metadata about the query.
 	// Used when --score=false to exclude scores
-	
+
 	enc := json.NewEncoder(os.Stdout)
 	if pretty, _ := cmd.Flags().GetBool("pretty"); pretty {
 		enc.SetIndent("", "  ")
