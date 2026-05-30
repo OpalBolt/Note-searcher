@@ -215,7 +215,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		charCount := fieldInt(hit.Fields["chars"])
 
 		var snippet string
-		var matches int
+		var matches map[string]int
 		if snippetFlag {
 			body := fieldString(hit.Fields["body"])
 			frags := hit.Fragments["body"]
@@ -384,9 +384,9 @@ func stripTags(s string) string {
 	return b.String()
 }
 
-// countTermMatches returns the number of times the terms found in fragments
-// appear in body. It reuses the same term-extraction logic as buildSnippets.
-func countTermMatches(body string, fragments []string) int {
+// countTermMatches returns per-term occurrence counts for all terms found in
+// the Bleve HTML fragments. Keys are lowercase term strings.
+func countTermMatches(body string, fragments []string) map[string]int {
 	termSet := make(map[string]struct{})
 	for _, frag := range fragments {
 		remaining := frag
@@ -404,7 +404,7 @@ func countTermMatches(body string, fragments []string) int {
 		}
 	}
 	lowerBody := strings.ToLower(body)
-	count := 0
+	counts := make(map[string]int)
 	for term := range termSet {
 		searchFrom := 0
 		for {
@@ -412,11 +412,14 @@ func countTermMatches(body string, fragments []string) int {
 			if idx < 0 {
 				break
 			}
-			count++
+			counts[term]++
 			searchFrom = searchFrom + idx + len(term)
 		}
 	}
-	return count
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
 }
 
 // Probe executes a query and returns facet counts over the matching result set.

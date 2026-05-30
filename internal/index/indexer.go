@@ -36,7 +36,7 @@ type SearchResult struct {
 	Tags    []string `json:"tags"`
 	Chars   int      `json:"chars"`
 	Snippet  string   `json:"snippet,omitempty"`
-	Matches  int      `json:"matches,omitempty"`
+	Matches  map[string]int `json:"matches,omitempty"`
 	Score    float64  `json:"score,omitempty"`
 }
 
