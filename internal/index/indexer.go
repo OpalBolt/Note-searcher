@@ -39,6 +39,14 @@ type SearchResult struct {
 	Score   float64  `json:"score,omitempty"`
 }
 
+// SearchResponse wraps search results with metadata about the query.
+type SearchResponse struct {
+	Total   int            `json:"total"`
+	Shown   int            `json:"shown"`
+	Query   string         `json:"query"`
+	Results []SearchResult `json:"results"`
+}
+
 // FacetCounts maps a field value to its occurrence count
 type FacetCounts map[string]int
 

@@ -174,10 +174,10 @@ func (b *BleveIndexer) Build(notesDir string) (IndexStats, error) {
 
 // Search executes a Bleve query string. Unless all=true, deprecated and superseded
 // notes are excluded by default.
-func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag bool) ([]SearchResult, error) {
+func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag bool) (SearchResponse, error) {
 	idx, err := bleve.Open(b.IndexPath)
 	if err != nil {
-		return nil, fmt.Errorf("open bleve index: %w", err)
+		return SearchResponse{}, fmt.Errorf("open bleve index: %w", err)
 	}
 	defer idx.Close()
 
@@ -197,7 +197,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 
 	res, err := idx.Search(req)
 	if err != nil {
-		return nil, fmt.Errorf("execute search: %w", err)
+		return SearchResponse{}, fmt.Errorf("execute search: %w", err)
 	}
 
 	results := make([]SearchResult, 0, len(res.Hits))
@@ -230,7 +230,12 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 			Score:   hit.Score,
 		})
 	}
-	return results, nil
+	return SearchResponse{
+		Total:   int(res.Total),
+		Shown:   len(results),
+		Query:   queryStr,
+		Results: results,
+	}, nil
 }
 
 // Probe executes a query and returns facet counts over the matching result set.
