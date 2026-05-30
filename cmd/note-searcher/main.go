@@ -155,13 +155,14 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Strip score — output order already reflects relevance ranking
 	type resultOut struct {
-		Path    string   `json:"path"`
-		Title   string   `json:"title"`
-		Status  string   `json:"status"`
-		Domain  []string `json:"domain"`
-		Tags    []string `json:"tags"`
-		Chars   int      `json:"chars"`
-		Snippet string   `json:"snippet,omitempty"`
+		Path    string         `json:"path"`
+		Title   string         `json:"title"`
+		Status  string         `json:"status"`
+		Domain  []string       `json:"domain"`
+		Tags    []string       `json:"tags"`
+		Chars   int            `json:"chars"`
+		Snippet string         `json:"snippet,omitempty"`
+		Matches map[string]int `json:"matches,omitempty"`
 	}
 
 	// searchOut wraps search results with metadata about the query.
@@ -189,7 +190,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		Results: make([]resultOut, len(resp.Results)),
 	}
 	for i, r := range resp.Results {
-		out.Results[i] = resultOut{Path: r.Path, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet}
+		out.Results[i] = resultOut{Path: r.Path, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet, Matches: r.Matches}
 	}
 	return enc.Encode(out)
 }
