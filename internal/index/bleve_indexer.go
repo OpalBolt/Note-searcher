@@ -1,14 +1,18 @@
 package index
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	bleve "github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
 	bquery "github.com/blevesearch/bleve/v2/search/query"
+	bleveIndexAPI "github.com/blevesearch/bleve_index_api"
 
 	// Register the English analyzer
 	_ "github.com/blevesearch/bleve/v2/analysis/lang/en"
@@ -59,9 +63,34 @@ func buildMapping() mapping.IndexMapping {
 	dm.AddFieldMappingsAt("requires_human_review", boolField)
 	dm.AddFieldMappingsAt("is_superseded", boolField)
 	dm.AddFieldMappingsAt("chars", numericField)
+	dm.AddFieldMappingsAt("id", keywordField)
 
 	im.DefaultMapping = dm
 	return im
+}
+
+// minUniquePrefixLen computes the minimum prefix length n (starting at 7)
+// where no two IDs share an n-character prefix.
+func minUniquePrefixLen(ids []string) int {
+	for n := 7; n <= 64; n++ {
+		seen := make(map[string]bool, len(ids))
+		collision := false
+		for _, id := range ids {
+			if len(id) < n {
+				continue
+			}
+			prefix := id[:n]
+			if seen[prefix] {
+				collision = true
+				break
+			}
+			seen[prefix] = true
+		}
+		if !collision {
+			return n
+		}
+	}
+	return 64
 }
 
 // Build walks notesDir, parses frontmatter, and indexes all .md files.
@@ -143,6 +172,10 @@ func (b *BleveIndexer) Build(notesDir string) (IndexStats, error) {
 		docID = filepath.ToSlash(docID)
 		// Store relative path so results are portable across machines
 		doc["path"] = docID
+		relPath := docID // relPath is the slash-normalized relative path
+		h := sha256.Sum256([]byte(relPath))
+		idHex := hex.EncodeToString(h[:])
+		doc["id"] = idHex
 
 		if err := batch.Index(docID, doc); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: index %s: %v\n", path, err)
@@ -169,6 +202,23 @@ func (b *BleveIndexer) Build(notesDir string) (IndexStats, error) {
 			return IndexStats{}, fmt.Errorf("flush final batch: %w", err)
 		}
 	}
+	// Compute minimum unique prefix length and store as metadata
+	q := bleve.NewMatchAllQuery()
+	req := bleve.NewSearchRequestOptions(q, int(fileCount), 0, false)
+	req.Fields = []string{"id"}
+	res, err := idx.Search(req)
+	if err == nil && res.Total > 0 {
+		var idHexes []string
+		for _, hit := range res.Hits {
+			idHex := fieldString(hit.Fields["id"])
+			if idHex != "" {
+				idHexes = append(idHexes, idHex)
+			}
+		}
+		n := minUniquePrefixLen(idHexes)
+		meta := map[string]interface{}{"prefix_len": strconv.Itoa(n)}
+		idx.Index("__meta__prefix_len", meta)
+	}
 
 	return IndexStats{
 		FileCount:  fileCount,
@@ -193,7 +243,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 	}
 
 	req := bleve.NewSearchRequestOptions(q, size, 0, false)
-	req.Fields = []string{"path", "title", "status", "domain", "tags", "chars"}
+	req.Fields = []string{"path", "title", "status", "domain", "tags", "chars", "id"}
 	if snippetFlag {
 		req.Highlight = bleve.NewHighlight()
 		htmlStyle := "html"
@@ -205,15 +255,35 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 	if err != nil {
 		return SearchResponse{}, fmt.Errorf("execute search: %w", err)
 	}
+	// Load cached prefix length by fetching the metadata document directly by key
+	n := 7
+	if metaDoc, _ := idx.Document("__meta__prefix_len"); metaDoc != nil {
+		metaDoc.VisitFields(func(field bleveIndexAPI.Field) {
+			if field.Name() == "prefix_len" {
+				if v, err2 := strconv.Atoi(string(field.Value())); err2 == nil {
+					n = v
+				}
+			}
+		})
+	}
 
 	results := make([]SearchResult, 0, len(res.Hits))
 	for _, hit := range res.Hits {
+		// Skip metadata documents (those with hit.ID starting with __)
+		if strings.HasPrefix(hit.ID, "__") {
+			continue
+		}
 		path := fieldString(hit.Fields["path"])
 		title := fieldString(hit.Fields["title"])
 		status := fieldString(hit.Fields["status"])
 		domain := fieldStringSlice(hit.Fields["domain"])
 		tags := fieldStringSlice(hit.Fields["tags"])
 		charCount := fieldInt(hit.Fields["chars"])
+		idHex := fieldString(hit.Fields["id"])
+		shortID := idHex
+		if len(shortID) > n {
+			shortID = shortID[:n]
+		}
 
 		var snippet string
 		var matches map[string]int
@@ -225,6 +295,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		}
 
 		results = append(results, SearchResult{
+			ID:      shortID,
 			Path:    path,
 			Title:   title,
 			Status:  status,
@@ -242,6 +313,34 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		Query:   queryStr,
 		Results: results,
 	}, nil
+}
+
+// ResolveID resolves a short ID prefix to the full file path.
+// If the prefix is ambiguous or not found, an error is returned.
+func (b *BleveIndexer) ResolveID(prefix string) (string, error) {
+	idx, err := bleve.Open(b.IndexPath)
+	if err != nil {
+		return "", fmt.Errorf("open bleve index: %w", err)
+	}
+	defer idx.Close()
+
+	q := bleve.NewPrefixQuery(prefix)
+	q.SetField("id")
+	req := bleve.NewSearchRequest(q)
+	req.Size = 2
+	req.Fields = []string{"path"}
+	res, err := idx.Search(req)
+	if err != nil {
+		return "", err
+	}
+	if res.Total == 0 {
+		return "", fmt.Errorf("id prefix %q not found", prefix)
+	}
+	if res.Total > 1 {
+		return "", fmt.Errorf("id prefix %q is ambiguous (%d matches)", prefix, res.Total)
+	}
+	path := fieldString(res.Hits[0].Fields["path"])
+	return path, nil
 }
 
 // extractWindow returns a string of up to size runes centred on centre within runes.
@@ -264,7 +363,6 @@ func extractWindow(runes []rune, centre, size int) string {
 	}
 	return string(runes[start:end])
 }
-
 
 // buildSnippets finds every occurrence of the matched term in body and returns
 // one size-rune window centred on each, joined with " ... ". Overlapping windows
@@ -432,7 +530,6 @@ func bodyWords(body string) []string {
 	return words
 }
 
-
 // countTermMatches counts how many times each query term (or its stemmed
 // variants) appears in body as whole words. Keys are the original query terms
 // where possible, falling back to the stemmed surface form from fragments.
@@ -523,10 +620,20 @@ func (b *BleveIndexer) Probe(queryStr string) (ProbeResult, error) {
 			facets[field] = counts
 		}
 	}
+	// Count actual documents (excluding internal metadata docs).
+	// Probe uses size=0, so res.Hits is empty — use res.Total directly.
+	// Subtract 1 if the metadata document exists in the index.
+	totalMatches := int(res.Total)
+	if metaDoc, _ := idx.Document("__meta__prefix_len"); metaDoc != nil {
+		totalMatches--
+		if totalMatches < 0 {
+			totalMatches = 0
+		}
+	}
 
 	return ProbeResult{
 		Query:        queryStr,
-		TotalMatches: int(res.Total),
+		TotalMatches: totalMatches,
 		Facets:       facets,
 	}, nil
 }

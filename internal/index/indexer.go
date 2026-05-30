@@ -29,15 +29,16 @@ type IndexStats struct {
 
 // SearchResult is a single result returned by Search
 type SearchResult struct {
-	Path    string   `json:"path"`
-	Title   string   `json:"title"`
-	Status  string   `json:"status"`
-	Domain  []string `json:"domain"`
-	Tags    []string `json:"tags"`
-	Chars   int      `json:"chars"`
-	Snippet  string   `json:"snippet,omitempty"`
-	Matches  map[string]int `json:"matches,omitempty"`
-	Score    float64  `json:"score,omitempty"`
+	ID      string         `json:"id"`
+	Path    string         `json:"path"`
+	Title   string         `json:"title"`
+	Status  string         `json:"status"`
+	Domain  []string       `json:"domain"`
+	Tags    []string       `json:"tags"`
+	Chars   int            `json:"chars"`
+	Snippet string         `json:"snippet,omitempty"`
+	Matches map[string]int `json:"matches,omitempty"`
+	Score   float64        `json:"score,omitempty"`
 }
 
 // SearchResponse wraps search results with metadata about the query.
