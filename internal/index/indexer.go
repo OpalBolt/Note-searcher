@@ -35,8 +35,9 @@ type SearchResult struct {
 	Domain  []string `json:"domain"`
 	Tags    []string `json:"tags"`
 	Chars   int      `json:"chars"`
-	Snippet string   `json:"snippet,omitempty"`
-	Score   float64  `json:"score,omitempty"`
+	Snippet  string   `json:"snippet,omitempty"`
+	Matches  map[string]int `json:"matches,omitempty"`
+	Score    float64  `json:"score,omitempty"`
 }
 
 // SearchResponse wraps search results with metadata about the query.

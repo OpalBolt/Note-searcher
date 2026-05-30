@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	bleve "github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
@@ -11,6 +12,9 @@ import (
 
 	// Register the English analyzer
 	_ "github.com/blevesearch/bleve/v2/analysis/lang/en"
+	// Register the HTML highlight formatter
+	_ "github.com/blevesearch/bleve/v2/search/highlight/format/html"
+	porterstemmer "github.com/blevesearch/go-porterstemmer"
 )
 
 // BleveIndexer is the sole index backend.
@@ -174,7 +178,7 @@ func (b *BleveIndexer) Build(notesDir string) (IndexStats, error) {
 
 // Search executes a Bleve query string. Unless all=true, deprecated and superseded
 // notes are excluded by default.
-func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag bool) (SearchResponse, error) {
+func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag bool, snippetSize int) (SearchResponse, error) {
 	idx, err := bleve.Open(b.IndexPath)
 	if err != nil {
 		return SearchResponse{}, fmt.Errorf("open bleve index: %w", err)
@@ -192,6 +196,8 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 	req.Fields = []string{"path", "title", "status", "domain", "tags", "chars"}
 	if snippetFlag {
 		req.Highlight = bleve.NewHighlight()
+		htmlStyle := "html"
+		req.Highlight.Style = &htmlStyle
 		req.Fields = append(req.Fields, "body")
 	}
 
@@ -210,13 +216,12 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		charCount := fieldInt(hit.Fields["chars"])
 
 		var snippet string
-		if snippetFlag && hit.Fragments != nil {
-			for _, frags := range hit.Fragments {
-				if len(frags) > 0 {
-					snippet = frags[0]
-					break
-				}
-			}
+		var matches map[string]int
+		if snippetFlag {
+			body := fieldString(hit.Fields["body"])
+			frags := hit.Fragments["body"]
+			snippet = buildSnippets(body, frags, snippetSize)
+			matches = countTermMatches(body, frags, queryStr)
 		}
 
 		results = append(results, SearchResult{
@@ -227,6 +232,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 			Tags:    tags,
 			Chars:   charCount,
 			Snippet: snippet,
+			Matches: matches,
 			Score:   hit.Score,
 		})
 	}
@@ -236,6 +242,248 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		Query:   queryStr,
 		Results: results,
 	}, nil
+}
+
+// extractWindow returns a string of up to size runes centred on centre within runes.
+func extractWindow(runes []rune, centre, size int) string {
+	if len(runes) <= size {
+		return string(runes)
+	}
+	half := size / 2
+	start := centre - half
+	if start < 0 {
+		start = 0
+	}
+	end := start + size
+	if end > len(runes) {
+		end = len(runes)
+		start = end - size
+		if start < 0 {
+			start = 0
+		}
+	}
+	return string(runes[start:end])
+}
+
+
+// buildSnippets finds every occurrence of the matched term in body and returns
+// one size-rune window centred on each, joined with " ... ". Overlapping windows
+// are merged by skipping. The matched term is extracted from the first Bleve
+// fragment that contains a <mark> tag; Bleve only returns one fragment per field
+// by default, so we do the multi-occurrence search ourselves.
+func buildSnippets(body string, fragments []string, size int) string {
+	if size <= 0 {
+		size = 150
+	}
+	bodyRunes := []rune(body)
+	if len(bodyRunes) == 0 {
+		return ""
+	}
+
+	// Extract all unique matched terms from fragment <mark> tags.
+	termSet := make(map[string]struct{})
+	for _, frag := range fragments {
+		remaining := frag
+		for {
+			start := strings.Index(remaining, "<mark>")
+			end := strings.Index(remaining, "</mark>")
+			if start < 0 || end <= start {
+				break
+			}
+			term := remaining[start+len("<mark>") : end]
+			if term != "" {
+				termSet[strings.ToLower(term)] = struct{}{}
+			}
+			remaining = remaining[end+len("</mark>"):]
+		}
+	}
+
+	if len(termSet) == 0 {
+		return extractWindow(bodyRunes, 0, size)
+	}
+
+	// Find every occurrence of every term in the body and collect rune centres.
+	lowerBody := strings.ToLower(body)
+	var centres []int
+	for term := range termSet {
+		searchFrom := 0
+		for {
+			idx := strings.Index(lowerBody[searchFrom:], term)
+			if idx < 0 {
+				break
+			}
+			absIdx := searchFrom + idx
+			centres = append(centres, len([]rune(body[:absIdx])))
+			searchFrom = absIdx + len(term)
+		}
+	}
+
+	if len(centres) == 0 {
+		return extractWindow(bodyRunes, 0, size)
+	}
+
+	// Sort centres so windows are emitted in document order.
+	for i := 1; i < len(centres); i++ {
+		for j := i; j > 0 && centres[j] < centres[j-1]; j-- {
+			centres[j], centres[j-1] = centres[j-1], centres[j]
+		}
+	}
+
+	// Build non-overlapping windows.
+	var windows []string
+	lastWindowEnd := -1
+	for _, centre := range centres {
+		half := size / 2
+		winStart := centre - half
+		if winStart < 0 {
+			winStart = 0
+		}
+		if winStart < lastWindowEnd {
+			continue // overlaps with previous window — skip
+		}
+		winEnd := winStart + size
+		if winEnd > len(bodyRunes) {
+			winEnd = len(bodyRunes)
+		}
+		lastWindowEnd = winEnd
+		windows = append(windows, extractWindow(bodyRunes, centre, size))
+	}
+
+	if len(windows) == 0 {
+		return extractWindow(bodyRunes, 0, size)
+	}
+	return strings.Join(windows, " ... ")
+}
+
+// stripTags removes HTML tags from s. Only sequences of the form <letter...>,
+// </...>, or <!...> are treated as tags; bare < characters are preserved.
+func stripTags(s string) string {
+	var b strings.Builder
+	for len(s) > 0 {
+		ltIdx := strings.IndexByte(s, '<')
+		if ltIdx < 0 {
+			b.WriteString(s)
+			break
+		}
+		b.WriteString(s[:ltIdx])
+		rest := s[ltIdx+1:]
+		// Only strip if it looks like an HTML tag
+		if len(rest) > 0 && (rest[0] == '/' ||
+			(rest[0] >= 'a' && rest[0] <= 'z') ||
+			(rest[0] >= 'A' && rest[0] <= 'Z') ||
+			rest[0] == '!') {
+			gtIdx := strings.IndexByte(rest, '>')
+			if gtIdx >= 0 {
+				s = rest[gtIdx+1:]
+				continue
+			}
+		}
+		// Not a tag — emit the '<' and continue
+		b.WriteByte('<')
+		s = rest
+	}
+	return b.String()
+}
+
+// stemWord lowercases and Porter-stems a single word.
+func stemWord(word string) string {
+	return string(porterstemmer.StemWithoutLowerCasing([]rune(strings.ToLower(word))))
+}
+
+// extractQueryTerms parses a Bleve query string and returns the bare search
+// terms with operators (+/-), field prefixes (field:), and quotes stripped.
+func extractQueryTerms(queryStr string) []string {
+	var terms []string
+	for _, token := range strings.Fields(queryStr) {
+		token = strings.TrimLeft(token, "+-")
+		if i := strings.Index(token, ":"); i >= 0 {
+			token = token[i+1:]
+		}
+		token = strings.Trim(token, "\"")
+		token = strings.ToLower(strings.TrimSpace(token))
+		if token != "" {
+			terms = append(terms, token)
+		}
+	}
+	return terms
+}
+
+// bodyWords splits body into lowercase alphabetic tokens (simple word tokenizer).
+func bodyWords(body string) []string {
+	var words []string
+	start := -1
+	runes := []rune(strings.ToLower(body))
+	for i, r := range runes {
+		isAlpha := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlpha {
+			if start < 0 {
+				start = i
+			}
+		} else {
+			if start >= 0 {
+				words = append(words, string(runes[start:i]))
+				start = -1
+			}
+		}
+	}
+	if start >= 0 {
+		words = append(words, string(runes[start:]))
+	}
+	return words
+}
+
+
+// countTermMatches counts how many times each query term (or its stemmed
+// variants) appears in body as whole words. Keys are the original query terms
+// where possible, falling back to the stemmed surface form from fragments.
+func countTermMatches(body string, fragments []string, queryStr string) map[string]int {
+	// Build stem → canonical key map, preferring query terms as keys.
+	stemToKey := make(map[string]string)
+
+	for _, qt := range extractQueryTerms(queryStr) {
+		s := stemWord(qt)
+		if _, exists := stemToKey[s]; !exists {
+			stemToKey[s] = qt
+		}
+	}
+	// Supplement with surface forms from <mark> tags (catches terms not in the
+	// simple query parse, e.g. field queries whose values appear highlighted).
+	for _, frag := range fragments {
+		remaining := frag
+		for {
+			start := strings.Index(remaining, "<mark>")
+			end := strings.Index(remaining, "</mark>")
+			if start < 0 || end <= start {
+				break
+			}
+			term := strings.ToLower(remaining[start+len("<mark>") : end])
+			if term != "" {
+				s := stemWord(term)
+				if _, exists := stemToKey[s]; !exists {
+					stemToKey[s] = term
+				}
+			}
+			remaining = remaining[end+len("</mark>"):]
+		}
+	}
+
+	if len(stemToKey) == 0 {
+		return nil
+	}
+
+	// Count whole-word matches in the body using stemmed comparison.
+	counts := make(map[string]int)
+	for _, word := range bodyWords(body) {
+		s := stemWord(word)
+		if key, ok := stemToKey[s]; ok {
+			counts[key]++
+		}
+	}
+
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
 }
 
 // Probe executes a query and returns facet counts over the matching result set.

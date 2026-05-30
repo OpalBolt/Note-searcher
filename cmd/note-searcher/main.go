@@ -58,6 +58,7 @@ func init() {
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
 	searchCmd.Flags().Bool("snippet", false, "Include a content excerpt around the match")
+	searchCmd.Flags().Int("snippet-size", 0, "Snippet length in characters; implies --snippet (default 150 when --snippet is used alone)")
 	searchCmd.Flags().Bool("score", false, "Include relevance score in output")
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 	searchCmd.Flags().String("format", "json", "Output format: json or text")
@@ -126,12 +127,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	all, _ := cmd.Flags().GetBool("all")
 	snippet, _ := cmd.Flags().GetBool("snippet")
+	snippetSize, _ := cmd.Flags().GetInt("snippet-size")
+	if snippetSize > 0 {
+		snippet = true
+	}
 	format, _ := cmd.Flags().GetString("format")
 	limit, _ := cmd.Flags().GetInt("limit")
 	score, _ := cmd.Flags().GetBool("score")
 
 	indexer := index.NewBleveIndexer(cfg.IndexPath)
-	resp, err := indexer.Search(queryStr, all, limit, snippet)
+	resp, err := indexer.Search(queryStr, all, limit, snippet, snippetSize)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
@@ -150,18 +155,19 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Strip score — output order already reflects relevance ranking
 	type resultOut struct {
-		Path    string   `json:"path"`
-		Title   string   `json:"title"`
-		Status  string   `json:"status"`
-		Domain  []string `json:"domain"`
-		Tags    []string `json:"tags"`
-		Chars   int      `json:"chars"`
-		Snippet string   `json:"snippet,omitempty"`
+		Path    string         `json:"path"`
+		Title   string         `json:"title"`
+		Status  string         `json:"status"`
+		Domain  []string       `json:"domain"`
+		Tags    []string       `json:"tags"`
+		Chars   int            `json:"chars"`
+		Snippet string         `json:"snippet,omitempty"`
+		Matches map[string]int `json:"matches,omitempty"`
 	}
-	
+
 	// searchOut wraps search results with metadata about the query.
 	// Used when --score=false to exclude scores
-	
+
 	enc := json.NewEncoder(os.Stdout)
 	if pretty, _ := cmd.Flags().GetBool("pretty"); pretty {
 		enc.SetIndent("", "  ")
@@ -184,7 +190,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		Results: make([]resultOut, len(resp.Results)),
 	}
 	for i, r := range resp.Results {
-		out.Results[i] = resultOut{Path: r.Path, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet}
+		out.Results[i] = resultOut{Path: r.Path, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet, Matches: r.Matches}
 	}
 	return enc.Encode(out)
 }

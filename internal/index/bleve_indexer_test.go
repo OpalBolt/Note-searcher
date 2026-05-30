@@ -3,6 +3,7 @@ package index
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -104,11 +105,11 @@ this note is verified but has been superseded`,
 
 	t.Run("search_error_default_filter", func(t *testing.T) {
 		// Search "error" with default filter should hide deprecated/superseded
-		resp, err := indexer.Search("error", false, 0, false)
+		resp, err := indexer.Search("error", false, 0, false, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		
+
 		if len(resp.Results) != 1 {
 			t.Errorf("expected 1 result, got %d", len(resp.Results))
 		}
@@ -119,11 +120,11 @@ this note is verified but has been superseded`,
 
 	t.Run("search_golang_all_flag", func(t *testing.T) {
 		// Search "golang" with all=true should include deprecated
-		resp, err := indexer.Search("golang", true, 0, false)
+		resp, err := indexer.Search("golang", true, 0, false, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		
+
 		if len(resp.Results) != 3 {
 			t.Errorf("expected 3 results, got %d", len(resp.Results))
 		}
@@ -138,11 +139,11 @@ this note is verified but has been superseded`,
 
 	t.Run("search_empty_default_filter", func(t *testing.T) {
 		// Empty search with default filter should get verified and inbox
-		resp, err := indexer.Search("", false, 0, false)
+		resp, err := indexer.Search("", false, 0, false, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		
+
 		if len(resp.Results) != 3 {
 			t.Errorf("expected 3 results, got %d", len(resp.Results))
 		}
@@ -189,11 +190,11 @@ this note is verified but has been superseded`,
 
 	t.Run("search_field_query", func(t *testing.T) {
 		// Search with field query domain:kubernetes default filter
-		resp, err := indexer.Search("domain:kubernetes", false, 0, false)
+		resp, err := indexer.Search("domain:kubernetes", false, 0, false, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		
+
 		// Should get note3 and note4 (not note5 due to superseded filter)
 		if len(resp.Results) != 2 {
 			t.Errorf("expected 2 results, got %d", len(resp.Results))
@@ -212,7 +213,7 @@ this note is verified but has been superseded`,
 
 	t.Run("search_superseded_by_filter", func(t *testing.T) {
 		// note6 has status:verified but superseded-by set — must be hidden by default filter
-		resp, err := indexer.Search("superseded", false, 0, false)
+		resp, err := indexer.Search("superseded", false, 0, false, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
@@ -224,27 +225,67 @@ this note is verified but has been superseded`,
 	})
 
 	t.Run("search_snippet", func(t *testing.T) {
-		// Search with snippet flag
-		resp, err := indexer.Search("error", false, 0, true)
+		// Search with snippet flag - verify default snippet size (150) and centering
+		resp, err := indexer.Search("error", false, 0, true, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		
+
 		if len(resp.Results) != 1 {
 			t.Errorf("expected 1 result, got %d", len(resp.Results))
 		}
-		if len(resp.Results) > 0 && resp.Results[0].Snippet == "" {
-			t.Logf("note: snippet may be empty depending on Bleve highlight behavior")
+
+		if len(resp.Results) > 0 {
+			snippet := resp.Results[0].Snippet
+			if snippet == "" {
+				t.Logf("note: snippet may be empty depending on Bleve highlight behavior")
+			} else {
+				// Verify snippet length does not exceed 150 runes
+				snippetRunes := []rune(snippet)
+				if len(snippetRunes) > 150 {
+					t.Errorf("expected snippet <= 150 runes, got %d", len(snippetRunes))
+				}
+
+				// Verify matched term appears in snippet (centering works)
+				if !strings.Contains(strings.ToLower(snippet), "error") {
+					t.Errorf("expected 'error' to appear in snippet, got: %q", snippet)
+				}
+			}
+		}
+	})
+
+	t.Run("search_snippet_size", func(t *testing.T) {
+		// Search with custom snippet size (30 runes)
+		resp, err := indexer.Search("error", false, 0, true, 30)
+		if err != nil {
+			t.Fatalf("search failed: %v", err)
+		}
+
+		if len(resp.Results) != 1 {
+			t.Errorf("expected 1 result, got %d", len(resp.Results))
+		}
+
+		if len(resp.Results) > 0 {
+			snippet := resp.Results[0].Snippet
+			if snippet == "" {
+				t.Logf("note: snippet may be empty depending on Bleve highlight behavior")
+			} else {
+				// Verify snippet is at most 30 runes
+				snippetRunes := []rune(snippet)
+				if len(snippetRunes) > 30 {
+					t.Errorf("expected snippet <= 30 runes, got %d", len(snippetRunes))
+				}
+			}
 		}
 	})
 
 	t.Run("search_limit", func(t *testing.T) {
 		// Test limit parameter
-		resp, err := indexer.Search("", false, 2, false)
+		resp, err := indexer.Search("", false, 2, false, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		
+
 		if len(resp.Results) > 2 {
 			t.Errorf("expected at most 2 results with limit=2, got %d", len(resp.Results))
 		}
@@ -262,11 +303,11 @@ this note is verified but has been superseded`,
 
 	t.Run("chars", func(t *testing.T) {
 		// Check that chars field is populated for results
-		resp, err := indexer.Search("", false, 0, false)
+		resp, err := indexer.Search("", false, 0, false, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		
+
 		// All results should have Chars > 0
 		for _, r := range resp.Results {
 			if r.Chars <= 0 {
@@ -277,18 +318,18 @@ this note is verified but has been superseded`,
 			t.Logf("warning: no results returned")
 		}
 	})
-	
+
 	t.Run("search_score_order", func(t *testing.T) {
 		// Search "golang" to get multiple results with different relevance scores
-		resp, err := indexer.Search("golang", true, 0, false)
+		resp, err := indexer.Search("golang", true, 0, false, 150)
 		if err != nil {
 			t.Fatalf("search failed: %v", err)
 		}
-		
+
 		if len(resp.Results) < 2 {
 			t.Errorf("expected at least 2 results to verify score order, got %d", len(resp.Results))
 		}
-		
+
 		// Verify that scores are in descending order
 		for i := 1; i < len(resp.Results); i++ {
 			if resp.Results[i-1].Score < resp.Results[i].Score {
