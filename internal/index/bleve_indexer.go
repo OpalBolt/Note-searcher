@@ -14,6 +14,7 @@ import (
 	_ "github.com/blevesearch/bleve/v2/analysis/lang/en"
 	// Register the HTML highlight formatter
 	_ "github.com/blevesearch/bleve/v2/search/highlight/format/html"
+	porterstemmer "github.com/blevesearch/go-porterstemmer"
 )
 
 // BleveIndexer is the sole index backend.
@@ -220,7 +221,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 			body := fieldString(hit.Fields["body"])
 			frags := hit.Fragments["body"]
 			snippet = buildSnippets(body, frags, snippetSize)
-			matches = countTermMatches(body, frags)
+			matches = countTermMatches(body, frags, queryStr)
 		}
 
 		results = append(results, SearchResult{
@@ -384,10 +385,69 @@ func stripTags(s string) string {
 	return b.String()
 }
 
-// countTermMatches returns per-term occurrence counts for all terms found in
-// the Bleve HTML fragments. Keys are lowercase term strings.
-func countTermMatches(body string, fragments []string) map[string]int {
-	termSet := make(map[string]struct{})
+// stemWord lowercases and Porter-stems a single word.
+func stemWord(word string) string {
+	return string(porterstemmer.StemWithoutLowerCasing([]rune(strings.ToLower(word))))
+}
+
+// extractQueryTerms parses a Bleve query string and returns the bare search
+// terms with operators (+/-), field prefixes (field:), and quotes stripped.
+func extractQueryTerms(queryStr string) []string {
+	var terms []string
+	for _, token := range strings.Fields(queryStr) {
+		token = strings.TrimLeft(token, "+-")
+		if i := strings.Index(token, ":"); i >= 0 {
+			token = token[i+1:]
+		}
+		token = strings.Trim(token, "\"")
+		token = strings.ToLower(strings.TrimSpace(token))
+		if token != "" {
+			terms = append(terms, token)
+		}
+	}
+	return terms
+}
+
+// bodyWords splits body into lowercase alphabetic tokens (simple word tokenizer).
+func bodyWords(body string) []string {
+	var words []string
+	start := -1
+	runes := []rune(strings.ToLower(body))
+	for i, r := range runes {
+		isAlpha := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlpha {
+			if start < 0 {
+				start = i
+			}
+		} else {
+			if start >= 0 {
+				words = append(words, string(runes[start:i]))
+				start = -1
+			}
+		}
+	}
+	if start >= 0 {
+		words = append(words, string(runes[start:]))
+	}
+	return words
+}
+
+
+// countTermMatches counts how many times each query term (or its stemmed
+// variants) appears in body as whole words. Keys are the original query terms
+// where possible, falling back to the stemmed surface form from fragments.
+func countTermMatches(body string, fragments []string, queryStr string) map[string]int {
+	// Build stem → canonical key map, preferring query terms as keys.
+	stemToKey := make(map[string]string)
+
+	for _, qt := range extractQueryTerms(queryStr) {
+		s := stemWord(qt)
+		if _, exists := stemToKey[s]; !exists {
+			stemToKey[s] = qt
+		}
+	}
+	// Supplement with surface forms from <mark> tags (catches terms not in the
+	// simple query parse, e.g. field queries whose values appear highlighted).
 	for _, frag := range fragments {
 		remaining := frag
 		for {
@@ -396,26 +456,30 @@ func countTermMatches(body string, fragments []string) map[string]int {
 			if start < 0 || end <= start {
 				break
 			}
-			term := remaining[start+len("<mark>") : end]
+			term := strings.ToLower(remaining[start+len("<mark>") : end])
 			if term != "" {
-				termSet[strings.ToLower(term)] = struct{}{}
+				s := stemWord(term)
+				if _, exists := stemToKey[s]; !exists {
+					stemToKey[s] = term
+				}
 			}
 			remaining = remaining[end+len("</mark>"):]
 		}
 	}
-	lowerBody := strings.ToLower(body)
+
+	if len(stemToKey) == 0 {
+		return nil
+	}
+
+	// Count whole-word matches in the body using stemmed comparison.
 	counts := make(map[string]int)
-	for term := range termSet {
-		searchFrom := 0
-		for {
-			idx := strings.Index(lowerBody[searchFrom:], term)
-			if idx < 0 {
-				break
-			}
-			counts[term]++
-			searchFrom = searchFrom + idx + len(term)
+	for _, word := range bodyWords(body) {
+		s := stemWord(word)
+		if key, ok := stemToKey[s]; ok {
+			counts[key]++
 		}
 	}
+
 	if len(counts) == 0 {
 		return nil
 	}
