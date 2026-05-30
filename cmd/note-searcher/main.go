@@ -58,7 +58,7 @@ func init() {
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
 	searchCmd.Flags().Bool("snippet", false, "Include a content excerpt around the match")
-	searchCmd.Flags().Int("snippet-size", 150, "Snippet length in characters (used with --snippet)")
+	searchCmd.Flags().Int("snippet-size", 0, "Snippet length in characters; implies --snippet (default 150 when --snippet is used alone)")
 	searchCmd.Flags().Bool("score", false, "Include relevance score in output")
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 	searchCmd.Flags().String("format", "json", "Output format: json or text")
@@ -128,6 +128,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	all, _ := cmd.Flags().GetBool("all")
 	snippet, _ := cmd.Flags().GetBool("snippet")
 	snippetSize, _ := cmd.Flags().GetInt("snippet-size")
+	if snippetSize > 0 {
+		snippet = true
+	}
 	format, _ := cmd.Flags().GetString("format")
 	limit, _ := cmd.Flags().GetInt("limit")
 	score, _ := cmd.Flags().GetBool("score")

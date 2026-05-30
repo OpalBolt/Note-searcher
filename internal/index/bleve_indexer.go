@@ -12,6 +12,8 @@ import (
 
 	// Register the English analyzer
 	_ "github.com/blevesearch/bleve/v2/analysis/lang/en"
+	// Register the HTML highlight formatter
+	_ "github.com/blevesearch/bleve/v2/search/highlight/format/html"
 )
 
 // BleveIndexer is the sole index backend.
