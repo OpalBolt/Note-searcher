@@ -215,9 +215,12 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 		charCount := fieldInt(hit.Fields["chars"])
 
 		var snippet string
+		var matches int
 		if snippetFlag {
 			body := fieldString(hit.Fields["body"])
-			snippet = buildSnippets(body, hit.Fragments["body"], snippetSize)
+			frags := hit.Fragments["body"]
+			snippet = buildSnippets(body, frags, snippetSize)
+			matches = countTermMatches(body, frags)
 		}
 
 		results = append(results, SearchResult{
@@ -228,6 +231,7 @@ func (b *BleveIndexer) Search(queryStr string, all bool, limit int, snippetFlag 
 			Tags:    tags,
 			Chars:   charCount,
 			Snippet: snippet,
+			Matches: matches,
 			Score:   hit.Score,
 		})
 	}
@@ -378,6 +382,41 @@ func stripTags(s string) string {
 		s = rest
 	}
 	return b.String()
+}
+
+// countTermMatches returns the number of times the terms found in fragments
+// appear in body. It reuses the same term-extraction logic as buildSnippets.
+func countTermMatches(body string, fragments []string) int {
+	termSet := make(map[string]struct{})
+	for _, frag := range fragments {
+		remaining := frag
+		for {
+			start := strings.Index(remaining, "<mark>")
+			end := strings.Index(remaining, "</mark>")
+			if start < 0 || end <= start {
+				break
+			}
+			term := remaining[start+len("<mark>") : end]
+			if term != "" {
+				termSet[strings.ToLower(term)] = struct{}{}
+			}
+			remaining = remaining[end+len("</mark>"):]
+		}
+	}
+	lowerBody := strings.ToLower(body)
+	count := 0
+	for term := range termSet {
+		searchFrom := 0
+		for {
+			idx := strings.Index(lowerBody[searchFrom:], term)
+			if idx < 0 {
+				break
+			}
+			count++
+			searchFrom = searchFrom + idx + len(term)
+		}
+	}
+	return count
 }
 
 // Probe executes a query and returns facet counts over the matching result set.
