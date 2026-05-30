@@ -260,77 +260,87 @@ func extractWindow(runes []rune, centre, size int) string {
 	return string(runes[start:end])
 }
 
-// findMatchCentre returns the rune offset of a matched term within body, using
-// the Bleve HTML fragment to identify which occurrence and where in the text.
-// Falls back to 0 if the mark or the term cannot be located.
-func findMatchCentre(body, fragment string) int {
-	markStart := strings.Index(fragment, "<mark>")
-	if markStart < 0 {
-		return 0
-	}
-	markEnd := strings.Index(fragment, "</mark>")
-	if markEnd < markStart {
-		return 0
-	}
 
-	term := fragment[markStart+len("<mark>") : markEnd]
-	if term == "" {
-		return 0
-	}
-
-	// Use the plain-text prefix before <mark> (≥5 chars) to pinpoint the
-	// right occurrence of the term when it appears multiple times in the body.
-	prefix := strings.TrimSpace(strings.ReplaceAll(stripTags(fragment[:markStart]), "\u2026", ""))
-	if len([]rune(prefix)) >= 5 {
-		if idx := strings.Index(body, prefix); idx >= 0 {
-			return len([]rune(body[:idx+len(prefix)]))
-		}
-	}
-
-	// Fallback: first occurrence of the term (case-insensitive)
-	idx := strings.Index(strings.ToLower(body), strings.ToLower(term))
-	if idx < 0 {
-		return 0
-	}
-	return len([]rune(body[:idx]))
-}
-
-// buildSnippets extracts one size-rune window per unique match location from
-// body, using Bleve fragments to locate the matches. Overlapping windows
-// (within size runes of a prior centre) are merged by skipping. Windows are
-// joined with " ... ".
+// buildSnippets finds every occurrence of the matched term in body and returns
+// one size-rune window centred on each, joined with " ... ". Overlapping windows
+// are merged by skipping. The matched term is extracted from the first Bleve
+// fragment that contains a <mark> tag; Bleve only returns one fragment per field
+// by default, so we do the multi-occurrence search ourselves.
 func buildSnippets(body string, fragments []string, size int) string {
 	if size <= 0 {
 		size = 150
 	}
-	if body == "" || len(fragments) == 0 {
-		runes := []rune(body)
-		return extractWindow(runes, 0, size)
+	bodyRunes := []rune(body)
+	if len(bodyRunes) == 0 {
+		return ""
 	}
 
-	bodyRunes := []rune(body)
-	var windows []string
-	var usedCentres []int
-
+	// Extract all unique matched terms from fragment <mark> tags.
+	termSet := make(map[string]struct{})
 	for _, frag := range fragments {
-		centre := findMatchCentre(body, frag)
-
-		// Skip if this window would substantially overlap an existing one
-		overlaps := false
-		for _, used := range usedCentres {
-			diff := centre - used
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff < size {
-				overlaps = true
+		remaining := frag
+		for {
+			start := strings.Index(remaining, "<mark>")
+			end := strings.Index(remaining, "</mark>")
+			if start < 0 || end <= start {
 				break
 			}
+			term := remaining[start+len("<mark>") : end]
+			if term != "" {
+				termSet[strings.ToLower(term)] = struct{}{}
+			}
+			remaining = remaining[end+len("</mark>"):]
 		}
-		if overlaps {
-			continue
+	}
+
+	if len(termSet) == 0 {
+		return extractWindow(bodyRunes, 0, size)
+	}
+
+	// Find every occurrence of every term in the body and collect rune centres.
+	lowerBody := strings.ToLower(body)
+	var centres []int
+	for term := range termSet {
+		searchFrom := 0
+		for {
+			idx := strings.Index(lowerBody[searchFrom:], term)
+			if idx < 0 {
+				break
+			}
+			absIdx := searchFrom + idx
+			centres = append(centres, len([]rune(body[:absIdx])))
+			searchFrom = absIdx + len(term)
 		}
-		usedCentres = append(usedCentres, centre)
+	}
+
+	if len(centres) == 0 {
+		return extractWindow(bodyRunes, 0, size)
+	}
+
+	// Sort centres so windows are emitted in document order.
+	for i := 1; i < len(centres); i++ {
+		for j := i; j > 0 && centres[j] < centres[j-1]; j-- {
+			centres[j], centres[j-1] = centres[j-1], centres[j]
+		}
+	}
+
+	// Build non-overlapping windows.
+	var windows []string
+	lastWindowEnd := -1
+	for _, centre := range centres {
+		half := size / 2
+		winStart := centre - half
+		if winStart < 0 {
+			winStart = 0
+		}
+		if winStart < lastWindowEnd {
+			continue // overlaps with previous window — skip
+		}
+		winEnd := winStart + size
+		if winEnd > len(bodyRunes) {
+			winEnd = len(bodyRunes)
+		}
+		lastWindowEnd = winEnd
 		windows = append(windows, extractWindow(bodyRunes, centre, size))
 	}
 
