@@ -286,8 +286,10 @@ func runGet(cmd *cobra.Command, args []string) error {
 		Metadata *index.Frontmatter  `json:"metadata,omitempty"`
 		Error    string              `json:"error,omitempty"`
 		Mode     string              `json:"mode,omitempty"`
-		Headings []get.Heading       `json:"headings,omitempty"`
-		Sections []get.SectionResult `json:"sections,omitempty"`
+		Headings          []get.Heading       `json:"headings,omitempty"`
+		Sections          []get.SectionResult `json:"sections,omitempty"`
+		SelectedSection   string              `json:"selected_section,omitempty"`
+		SectionSearchTerm string              `json:"section_search_term,omitempty"`
 	}
 
 	results := make([]getResult, 0, len(args))
@@ -350,6 +352,8 @@ func runGet(cmd *cobra.Command, args []string) error {
 					secResults = aSlice
 				}
 				r.Mode = "section+section-search"
+				r.SelectedSection = section
+				r.SectionSearchTerm = sectionSearch
 			} else if section != "" {
 				sec, err := get.ExtractSection(body, section)
 				if err != nil {
@@ -358,6 +362,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 				}
 				secResults = []get.SectionResult{sec}
 				r.Mode = "section"
+				r.SelectedSection = section
 			} else {
 				var err error
 				secResults, err = get.ExtractSectionsContaining(body, sectionSearch)
@@ -366,6 +371,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 					continue
 				}
 				r.Mode = "section-search"
+				r.SectionSearchTerm = sectionSearch
 			}
 			r.Sections = secResults
 		case metadataOnly:

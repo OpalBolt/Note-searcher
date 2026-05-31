@@ -3,6 +3,9 @@ package get
 import (
 	"fmt"
 	"strings"
+
+	// Register the English analyzer used by ExtractSectionsContaining.
+	_ "github.com/blevesearch/bleve/v2/analysis/lang/en"
 )
 
 // Heading represents a single markdown heading extracted from a document body.
