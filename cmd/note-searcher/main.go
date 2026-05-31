@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/OpalBolt/note-searcher/internal/config"
 	"github.com/OpalBolt/note-searcher/internal/index"
@@ -155,7 +156,8 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Strip score — output order already reflects relevance ranking
 	type resultOut struct {
-		Path    string         `json:"path"`
+		ID      string         `json:"id"`
+		Path    string         `json:"path,omitempty"`
 		Title   string         `json:"title"`
 		Status  string         `json:"status"`
 		Domain  []string       `json:"domain"`
@@ -190,7 +192,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		Results: make([]resultOut, len(resp.Results)),
 	}
 	for i, r := range resp.Results {
-		out.Results[i] = resultOut{Path: r.Path, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet, Matches: r.Matches}
+		out.Results[i] = resultOut{ID: r.ID, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet, Matches: r.Matches}
 	}
 	return enc.Encode(out)
 }
@@ -218,6 +220,16 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	}
 	return enc.Encode(result)
 }
+
+func isHexString(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
 func runGet(cmd *cobra.Command, args []string) error {
 	full, _ := cmd.Flags().GetBool("full")
 	metadataOnly, _ := cmd.Flags().GetBool("metadata-only")
@@ -237,8 +249,22 @@ func runGet(cmd *cobra.Command, args []string) error {
 
 	results := make([]getResult, 0, len(args))
 
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	indexer := index.NewBleveIndexer(cfg.IndexPath)
 	for _, path := range args {
-		raw, err := os.ReadFile(path)
+		resolvedPath := path
+		// If path looks like an ID prefix (no path separator, hex chars only, length <= 64)
+		if !strings.Contains(path, "/") && !strings.Contains(path, "\\") && isHexString(path) {
+			p, err := indexer.ResolveID(path)
+			if err != nil {
+				return fmt.Errorf("resolve id %q: %w", path, err)
+			}
+			resolvedPath = filepath.Join(cfg.NotesDir, filepath.FromSlash(p))
+		}
+		raw, err := os.ReadFile(resolvedPath)
 		if err != nil {
 			errMsg := err.Error()
 			if os.IsNotExist(err) {

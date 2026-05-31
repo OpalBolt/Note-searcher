@@ -338,3 +338,144 @@ this note is verified but has been superseded`,
 		}
 	})
 }
+
+func TestBleveIndexer_IDs(t *testing.T) {
+	// Create temporary directories
+	notesDir := t.TempDir()
+	indexDir := t.TempDir()
+
+	// Create test markdown files
+	testFiles := map[string]string{
+		"doc1.md": `---
+title: First Document
+status: verified
+---
+This is the first document.`,
+		"doc2.md": `---
+title: Second Document
+status: verified
+---
+This is the second document.`,
+		"doc3.md": `---
+title: Third Document
+status: verified
+---
+This is the third document.`,
+	}
+
+	// Write test files
+	for filename, content := range testFiles {
+		path := filepath.Join(notesDir, filename)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write test file %s: %v", filename, err)
+		}
+	}
+
+	// Build index (first time)
+	indexer := NewBleveIndexer(indexDir)
+	stats, err := indexer.Build(notesDir)
+	if err != nil {
+		t.Fatalf("failed to build index: %v", err)
+	}
+
+	if stats.FileCount != 3 {
+		t.Errorf("expected 3 files indexed, got %d", stats.FileCount)
+	}
+
+	// Search and verify IDs
+	resp, err := indexer.Search("", false, 0, false, 150)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+
+	if len(resp.Results) != 3 {
+		t.Errorf("expected 3 results, got %d", len(resp.Results))
+	}
+
+	// Collect IDs from first indexing and verify they're hex strings of length >= 7
+	firstRunIDs := make(map[string]string) // path -> ID
+	for _, result := range resp.Results {
+		// Verify ID is non-empty
+		if result.ID == "" {
+			t.Errorf("expected non-empty ID for %s", result.Path)
+			continue
+		}
+
+		// Verify ID is a hex string
+		for _, c := range result.ID {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				t.Errorf("ID contains non-hex character: %q in %q", c, result.ID)
+				break
+			}
+		}
+
+		// Verify ID length >= 7
+		if len(result.ID) < 7 {
+			t.Errorf("expected ID length >= 7, got %d for %s", len(result.ID), result.Path)
+		}
+
+		// Note: Path is included in SearchResult but omitted in JSON output (see main.go)
+		firstRunIDs[result.Path] = result.ID
+	}
+
+	// Rebuild index (in a new directory to ensure clean state)
+	indexDir2 := t.TempDir()
+	indexer2 := NewBleveIndexer(indexDir2)
+	stats2, err := indexer2.Build(notesDir)
+	if err != nil {
+		t.Fatalf("failed to rebuild index: %v", err)
+	}
+
+	if stats2.FileCount != 3 {
+		t.Errorf("expected 3 files in second build, got %d", stats2.FileCount)
+	}
+
+	// Search again and verify IDs are identical (stability)
+	resp2, err := indexer2.Search("", false, 0, false, 150)
+	if err != nil {
+		t.Fatalf("second search failed: %v", err)
+	}
+
+	if len(resp2.Results) != 3 {
+		t.Errorf("expected 3 results in second search, got %d", len(resp2.Results))
+	}
+
+	// Verify IDs are stable (same paths produce same IDs)
+	for _, result := range resp2.Results {
+		if originalID, ok := firstRunIDs[result.Path]; ok {
+			if result.ID != originalID {
+				t.Errorf("ID changed for %s: was %q, now %q", result.Path, originalID, result.ID)
+			}
+		}
+	}
+
+	// Test ResolveID with valid prefix
+	t.Run("ResolveID_valid_prefix", func(t *testing.T) {
+		// Take the first ID and use a prefix to resolve it
+		var testID string
+		var testPath string
+		for p, id := range firstRunIDs {
+			testID = id
+			testPath = p
+			break
+		}
+
+		// Try with a 7-char prefix (minimum)
+		prefix := testID[:7]
+		resolvedPath, err := indexer.ResolveID(prefix)
+		if err != nil {
+			t.Errorf("ResolveID failed with valid prefix %q: %v", prefix, err)
+		}
+		if resolvedPath != testPath {
+			t.Errorf("expected ResolveID to return %q, got %q", testPath, resolvedPath)
+		}
+	})
+
+	// Test ResolveID with nonsense prefix
+	t.Run("ResolveID_not_found", func(t *testing.T) {
+		_, err := indexer.ResolveID("ffffffffffffffff")
+		if err == nil {
+			t.Errorf("expected ResolveID to return error for nonsense prefix")
+		}
+	})
+}

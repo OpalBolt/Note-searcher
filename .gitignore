@@ -40,3 +40,4 @@ testdata/bleve
 .blip/
 bin/
 testdata/index.json
+note-searcher
