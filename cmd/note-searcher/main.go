@@ -281,11 +281,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	type getResult struct {
-		Path     string              `json:"path"`
-		Content  string              `json:"content,omitempty"`
-		Metadata *index.Frontmatter  `json:"metadata,omitempty"`
-		Error    string              `json:"error,omitempty"`
-		Mode     string              `json:"mode,omitempty"`
+		Path              string              `json:"path"`
+		Content           string              `json:"content,omitempty"`
+		Metadata          *index.Frontmatter  `json:"metadata,omitempty"`
+		Error             string              `json:"error,omitempty"`
+		Mode              string              `json:"mode,omitempty"`
 		Headings          []get.Heading       `json:"headings,omitempty"`
 		Sections          []get.SectionResult `json:"sections,omitempty"`
 		SelectedSection   string              `json:"selected_section,omitempty"`
