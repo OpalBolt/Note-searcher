@@ -452,37 +452,6 @@ func buildSnippets(body string, fragments []string, size int) string {
 	}
 	return strings.Join(windows, " ... ")
 }
-
-// stripTags removes HTML tags from s. Only sequences of the form <letter...>,
-// </...>, or <!...> are treated as tags; bare < characters are preserved.
-func stripTags(s string) string {
-	var b strings.Builder
-	for len(s) > 0 {
-		ltIdx := strings.IndexByte(s, '<')
-		if ltIdx < 0 {
-			b.WriteString(s)
-			break
-		}
-		b.WriteString(s[:ltIdx])
-		rest := s[ltIdx+1:]
-		// Only strip if it looks like an HTML tag
-		if len(rest) > 0 && (rest[0] == '/' ||
-			(rest[0] >= 'a' && rest[0] <= 'z') ||
-			(rest[0] >= 'A' && rest[0] <= 'Z') ||
-			rest[0] == '!') {
-			gtIdx := strings.IndexByte(rest, '>')
-			if gtIdx >= 0 {
-				s = rest[gtIdx+1:]
-				continue
-			}
-		}
-		// Not a tag — emit the '<' and continue
-		b.WriteByte('<')
-		s = rest
-	}
-	return b.String()
-}
-
 // stemWord lowercases and Porter-stems a single word.
 func stemWord(word string) string {
 	return string(porterstemmer.StemWithoutLowerCasing([]rune(strings.ToLower(word))))

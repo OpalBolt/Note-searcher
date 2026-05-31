@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/OpalBolt/note-searcher/internal/config"
+	"github.com/OpalBolt/note-searcher/internal/get"
 	"github.com/OpalBolt/note-searcher/internal/index"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -64,6 +65,7 @@ func init() {
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 	searchCmd.Flags().String("format", "json", "Output format: json or text")
 	searchCmd.Flags().Int("limit", 0, "top N results by relevance score (0 = no limit)")
+	searchCmd.Flags().Bool("sections", false, "Include heading structure in search results")
 	probeCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 
 	// get-specific flags
@@ -71,6 +73,9 @@ func init() {
 	getCmd.Flags().Bool("metadata-only", false, "Return frontmatter fields only (no body)")
 	getCmd.Flags().Bool("pretty", false, "Pretty-print JSON output")
 	getCmd.Flags().String("format", "json", "Output format: json or text")
+	getCmd.Flags().Bool("titles-only", false, "Return heading structure only (H1-H6 with sequential IDs)")
+	getCmd.Flags().String("section", "", "Return content of section with given ID (e.g. h3)")
+	getCmd.Flags().String("section-search", "", "Return all sections containing the given term (case-insensitive)")
 
 	// Bind persistent flags to viper
 	_ = viper.BindPFlag("notes-dir", rootCmd.PersistentFlags().Lookup("notes-dir"))
@@ -135,11 +140,29 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	format, _ := cmd.Flags().GetString("format")
 	limit, _ := cmd.Flags().GetInt("limit")
 	score, _ := cmd.Flags().GetBool("score")
+	sections, _ := cmd.Flags().GetBool("sections")
 
 	indexer := index.NewBleveIndexer(cfg.IndexPath)
 	resp, err := indexer.Search(queryStr, all, limit, snippet, snippetSize)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
+	}
+	// Load headings for each result if sections flag is set
+	var headingsMap map[string][]get.Heading
+	if sections {
+		headingsMap = make(map[string][]get.Heading)
+		for _, r := range resp.Results {
+			filePath := filepath.Join(cfg.NotesDir, filepath.FromSlash(r.Path))
+			raw, err := os.ReadFile(filePath)
+			if err != nil {
+				continue // non-fatal
+			}
+			_, body, err := index.ParseFrontmatter(raw)
+			if err != nil {
+				continue // non-fatal
+			}
+			headingsMap[r.Path] = get.ParseHeadings(body)
+		}
 	}
 
 	if format == "text" {
@@ -156,15 +179,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Strip score — output order already reflects relevance ranking
 	type resultOut struct {
-		ID      string         `json:"id"`
-		Path    string         `json:"path,omitempty"`
-		Title   string         `json:"title"`
-		Status  string         `json:"status"`
-		Domain  []string       `json:"domain"`
-		Tags    []string       `json:"tags"`
-		Chars   int            `json:"chars"`
-		Snippet string         `json:"snippet,omitempty"`
-		Matches map[string]int `json:"matches,omitempty"`
+		ID       string         `json:"id"`
+		Path     string         `json:"path,omitempty"`
+		Title    string         `json:"title"`
+		Status   string         `json:"status"`
+		Domain   []string       `json:"domain"`
+		Tags     []string       `json:"tags"`
+		Chars    int            `json:"chars"`
+		Snippet  string         `json:"snippet,omitempty"`
+		Matches  map[string]int `json:"matches,omitempty"`
+		Headings []get.Heading  `json:"headings,omitempty"`
 	}
 
 	// searchOut wraps search results with metadata about the query.
@@ -192,7 +216,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		Results: make([]resultOut, len(resp.Results)),
 	}
 	for i, r := range resp.Results {
-		out.Results[i] = resultOut{ID: r.ID, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet, Matches: r.Matches}
+		result := resultOut{ID: r.ID, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet, Matches: r.Matches}
+		if headings, ok := headingsMap[r.Path]; ok {
+			result.Headings = headings
+		}
+		out.Results[i] = result
 	}
 	return enc.Encode(out)
 }
@@ -235,16 +263,33 @@ func runGet(cmd *cobra.Command, args []string) error {
 	metadataOnly, _ := cmd.Flags().GetBool("metadata-only")
 	pretty, _ := cmd.Flags().GetBool("pretty")
 	format, _ := cmd.Flags().GetString("format")
+	titlesOnly, _ := cmd.Flags().GetBool("titles-only")
+	section, _ := cmd.Flags().GetString("section")
+	sectionSearch, _ := cmd.Flags().GetString("section-search")
 
 	if full && metadataOnly {
 		return fmt.Errorf("--full and --metadata-only are mutually exclusive")
 	}
+	if titlesOnly && (full || metadataOnly) {
+		return fmt.Errorf("--titles-only cannot be combined with --full or --metadata-only")
+	}
+	if titlesOnly && (section != "" || sectionSearch != "") {
+		return fmt.Errorf("--titles-only cannot be combined with --section or --section-search")
+	}
+	if metadataOnly && (section != "" || sectionSearch != "") {
+		return fmt.Errorf("--metadata-only cannot be combined with --section or --section-search")
+	}
 
 	type getResult struct {
-		Path     string             `json:"path"`
-		Content  string             `json:"content,omitempty"`
-		Metadata *index.Frontmatter `json:"metadata,omitempty"`
-		Error    string             `json:"error,omitempty"`
+		Path              string              `json:"path"`
+		Content           string              `json:"content,omitempty"`
+		Metadata          *index.Frontmatter  `json:"metadata,omitempty"`
+		Error             string              `json:"error,omitempty"`
+		Mode              string              `json:"mode,omitempty"`
+		Headings          []get.Heading       `json:"headings,omitempty"`
+		Sections          []get.SectionResult `json:"sections,omitempty"`
+		SelectedSection   string              `json:"selected_section,omitempty"`
+		SectionSearchTerm string              `json:"section_search_term,omitempty"`
 	}
 
 	results := make([]getResult, 0, len(args))
@@ -283,12 +328,61 @@ func runGet(cmd *cobra.Command, args []string) error {
 		var r getResult
 		r.Path = path
 		switch {
+		case titlesOnly:
+			r.Mode = "titles-only"
+			r.Headings = get.ParseHeadings(body)
+		case section != "" || sectionSearch != "":
+			var secResults []get.SectionResult
+			if section != "" && sectionSearch != "" {
+				// union mode
+				secA, errA := get.ExtractSection(body, section)
+				secB, errB := get.ExtractSectionsContaining(body, sectionSearch)
+				if errA != nil && errB != nil {
+					results = append(results, getResult{Path: path, Error: "section not found and term not found in any section"})
+					continue
+				}
+				var aSlice []get.SectionResult
+				if errA == nil {
+					aSlice = []get.SectionResult{secA}
+				}
+				if errB == nil {
+					headings := get.ParseHeadings(body)
+					secResults = get.UnionSections(aSlice, secB, headings)
+				} else {
+					secResults = aSlice
+				}
+				r.Mode = "section+section-search"
+				r.SelectedSection = section
+				r.SectionSearchTerm = sectionSearch
+			} else if section != "" {
+				sec, err := get.ExtractSection(body, section)
+				if err != nil {
+					results = append(results, getResult{Path: path, Error: "section not found"})
+					continue
+				}
+				secResults = []get.SectionResult{sec}
+				r.Mode = "section"
+				r.SelectedSection = section
+			} else {
+				var err error
+				secResults, err = get.ExtractSectionsContaining(body, sectionSearch)
+				if err != nil {
+					results = append(results, getResult{Path: path, Error: "term not found in any section"})
+					continue
+				}
+				r.Mode = "section-search"
+				r.SectionSearchTerm = sectionSearch
+			}
+			r.Sections = secResults
 		case metadataOnly:
+			r.Mode = "metadata-only"
 			r.Metadata = &fm
 		case full:
+			r.Mode = "full"
 			r.Content = body
 			r.Metadata = &fm
 		default:
+			r.Mode = "body"
 			r.Content = body
 		}
 		results = append(results, r)
