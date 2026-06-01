@@ -52,6 +52,7 @@ func init() {
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.AddCommand(probeCmd)
 	rootCmd.AddCommand(getCmd)
+	rootCmd.AddCommand(guideCmd)
 
 	// Persistent flags available to all subcommands
 	rootCmd.PersistentFlags().String("notes-dir", "./notes", "directory containing markdown notes")

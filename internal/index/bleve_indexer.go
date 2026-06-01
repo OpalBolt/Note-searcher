@@ -452,6 +452,7 @@ func buildSnippets(body string, fragments []string, size int) string {
 	}
 	return strings.Join(windows, " ... ")
 }
+
 // stemWord lowercases and Porter-stems a single word.
 func stemWord(word string) string {
 	return string(porterstemmer.StemWithoutLowerCasing([]rune(strings.ToLower(word))))
