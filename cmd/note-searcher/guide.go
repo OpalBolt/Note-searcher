@@ -48,14 +48,14 @@ Run: note-searcher guide <topic>
 `
 
 var topics = map[string]string{
-	"workflow": `Workflow: probe (wide) → probe (tighter) ×N → search → get
+	"workflow": `Workflow: probe (wide) -> probe (tighter) xN -> search -> get
 
-Step 1 — probe wide
+Step 1 -- probe wide
   note-searcher probe <broad-query>
   Returns: total_matches + facet counts (tags, types, years, authors).
   Goal: understand the shape of the corpus. No documents returned.
 
-Step 2 — probe tighter (repeat as needed)
+Step 2 -- probe tighter (repeat as needed)
   note-searcher probe <narrower-query>
   Add field filters to reduce total_matches. Repeat until total_matches
   is in a manageable range (typically < 50). Use facet values from the
@@ -66,13 +66,13 @@ Step 2 — probe tighter (repeat as needed)
   - Facets show no useful further refinement
   - You already know the field values you want
 
-Step 3 — search
+Step 3 -- search
   note-searcher search <refined-query> [--limit N] [--snippet] [--score]
   Returns: matching documents with paths, titles, metadata.
   Use the query you refined through probing.
 
-Step 4 — get
-  note-searcher get <path> [--section <heading>] [--find <term>]
+Step 4 -- get
+  note-searcher get <path> [--section <id>] [--section-search <term>]
   Retrieve full content or a specific section of a document.
 
 Notes:
@@ -81,15 +81,21 @@ Notes:
   - Skip probing if you already know what you want
 `,
 
-	"probe": `probe — Explore the corpus with facet counts
+	"probe": `probe -- Explore the corpus with facet counts
 
 Usage:
-  note-searcher probe <query>
+  note-searcher probe [<query>]
+  (no query = match all documents)
+
+Output: always JSON. Use --pretty for readable formatting.
 
 What it returns:
   - total_matches: number of documents matching the query
   - Facets: tag counts, type counts, year counts, author counts
   It does NOT return documents. Use search for that.
+
+Flags:
+  --pretty    Pretty-print JSON output
 
 Typical use:
   1. probe with a broad query to see total_matches and dominant facets
@@ -97,14 +103,15 @@ Typical use:
   3. Repeat until total_matches is small enough to search
 
 Examples:
+  note-searcher probe
   note-searcher probe "kubernetes"
   note-searcher probe "kubernetes tags:devops"
-  note-searcher probe "kubernetes tags:devops year:2024"
+  note-searcher probe "kubernetes tags:devops year:2024" --pretty
 
 Query syntax: Bleve query strings (see: guide syntax)
 `,
 
-	"search": `search — Query documents and return results
+	"search": `search -- Query documents and return results
 
 Usage:
   note-searcher search <query> [flags]
@@ -138,7 +145,7 @@ Examples:
   note-searcher search "deployment" --format=text --pretty
 `,
 
-	"get": `get — Retrieve document content
+	"get": `get -- Retrieve document content
 
 Usage:
   note-searcher get <path> [<path> ...] [flags]
@@ -166,7 +173,7 @@ Examples:
   note-searcher get notes/deployment.md --titles-only
 `,
 
-	"syntax": `syntax — Bleve query string syntax reference
+	"syntax": `syntax -- Bleve query string syntax reference
 
 note-searcher uses Bleve query string syntax for all filtering.
 This applies to both probe and search.
@@ -190,7 +197,7 @@ Field queries:
   year:2024               Match by year
 
 Wildcard:
-  deploy*                 Prefix match (deploy, deployment, deployer…)
+  deploy*                 Prefix match (deploy, deployment, deployer...)
   tags:dev*               Prefix match on a field
 
 Fuzzy match:
