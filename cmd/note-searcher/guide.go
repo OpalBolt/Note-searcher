@@ -23,7 +23,6 @@ func runGuide(cmd *cobra.Command, args []string) error {
 		fmt.Println("Run `note-searcher guide <topic>` for a specific topic.")
 		fmt.Println()
 
-		// Print topics in order: workflow, probe, search, get, syntax
 		topicOrder := []string{"workflow", "probe", "search", "get", "syntax"}
 		for _, topic := range topicOrder {
 			content, exists := topics[topic]
@@ -71,9 +70,14 @@ Step 2 -- probe tighter (repeat as needed)
   - Facets show no useful further refinement
   - You already know the field values you want
 
+  Reading total_matches:
+  - Decreases when you add a term: good, the term is narrowing the set.
+  - Increases when you add a term: the term is too broad or absent from
+    the corpus -- drop it and try a different angle.
+
 Step 3 -- search
-  note-searcher search <refined-query> [--limit N] [--snippet] [--score]
-  Returns: matching documents with paths, titles, metadata.
+  note-searcher search <refined-query> [--limit N] [--score]
+  Returns: matching documents with paths, titles, metadata, snippets.
   Use the query you refined through probing.
 
 Step 4 -- get
@@ -84,6 +88,12 @@ Notes:
   - All filtering uses Bleve query string syntax (see: guide syntax)
   - Deprecated and superseded notes are hidden by default; use --all to include them
   - Skip probing if you already know what you want
+
+Example end-to-end:
+  note-searcher probe "kubernetes rolling update"        # wide: 800 matches
+  note-searcher probe "title:rolling update deployment"  # tighter: 45 matches
+  note-searcher search "title:rolling update deployment" # get results
+  note-searcher get <id>                                 # retrieve full content
 `,
 
 	"probe": `probe -- Explore the corpus with facet counts
@@ -102,6 +112,21 @@ What it returns:
 Flags:
   --pretty    Pretty-print JSON output
 
+Reading total_matches:
+  - Decreases when you add a term: good, keep it.
+  - Increases when you add a term: that term is too broad or not in the
+    corpus -- drop it and try a different angle.
+  - Stop when total_matches < 50 or facets show no useful refinement.
+
+Reliable fields:
+  title:        reliable -- filter freely
+  full-text     reliable -- unqualified terms search content directly
+
+  WARNING: metadata fields are unreliable in many corpora.
+  tags:, domain:, author:, status: may be missing or inconsistent.
+  Do not use them as filters unless you have confirmed they are populated.
+  Stick to title: and full-text terms.
+
 Typical use:
   1. probe with a broad query to see total_matches and dominant facets
   2. Pick a facet value (e.g. a tag) and add it to your next query
@@ -110,8 +135,8 @@ Typical use:
 Examples:
   note-searcher probe
   note-searcher probe "kubernetes"
-  note-searcher probe "kubernetes tags:devops"
-  note-searcher probe "kubernetes tags:devops year:2024" --pretty
+  note-searcher probe "title:kubernetes deployment"
+  note-searcher probe "title:kubernetes deployment" --pretty
 
 Query syntax: Bleve query strings (see: guide syntax)
 `,
@@ -123,7 +148,7 @@ Usage:
 
 Flags:
   --limit N            Maximum number of results (0 = no limit)
-  --snippet            Include a text snippet from each result (default 150 chars)
+  --snippet            Include a text snippet from each result (default: on)
   --snippet-size N     Snippet length in characters; implies --snippet
   --sections           Include heading structure in results
   --score              Include relevance score in output
@@ -132,8 +157,14 @@ Flags:
   --format             Output format: json or text (default: json)
   --pretty             Pretty-print JSON output
 
-Queryable fields:
-  title, tags, author, type, year, status, path
+Reliable fields for filtering:
+  title:        reliable
+  full-text     reliable (unqualified terms)
+
+  WARNING: tags:, domain:, author:, status: are unreliable in many
+  corpora and may be missing or inconsistent. Do not filter on them
+  unless you have confirmed they are populated. Prefer title: and
+  full-text terms.
 
 Default behaviour:
   Output is JSON. Use --format=text for human-readable output.
@@ -144,8 +175,7 @@ All filtering uses Bleve query string syntax (see: guide syntax).
 
 Examples:
   note-searcher search "deployment pipeline"
-  note-searcher search "tags:devops year:2024" --limit 20 --snippet
-  note-searcher search "author:alice" --sort date --score
+  note-searcher search "title:rolling update deployment" --limit 20
   note-searcher search "kubernetes" --snippet-size 300 --sections
   note-searcher search "deployment" --format=text --pretty
 `,
@@ -154,6 +184,7 @@ Examples:
 
 Usage:
   note-searcher get <path> [<path> ...] [flags]
+  note-searcher get --by-path <full-path> [flags]
 
 Modes (flags):
   (no flag)                    Full document content (frontmatter + body)
@@ -161,6 +192,10 @@ Modes (flags):
   --titles-only                Heading structure only (H1-H6 with sequential IDs)
   --section <id>               Content of a specific section (e.g. h3)
   --section-search <term>      All sections containing the term (case-insensitive)
+
+Path flags:
+  --by-path <path>     Accept a full absolute path (e.g. /home/user/notes/file.md)
+                       Useful when piping paths from search results.
 
 Output flags:
   --format             Output format: json or text (default: json)
@@ -172,6 +207,7 @@ Multiple files:
 
 Examples:
   note-searcher get notes/deployment.md
+  note-searcher get --by-path /home/mads/notes/deployment.md
   note-searcher get notes/deployment.md --section h3
   note-searcher get notes/deployment.md --section-search "rollback"
   note-searcher get notes/a.md notes/b.md --metadata-only
@@ -217,5 +253,6 @@ Notes:
   - Field names are lowercase
   - Wildcards only supported as suffix (prefix wildcards not supported)
   - Phrase search requires double quotes
+  - Prefer title: and full-text terms; metadata fields may be unreliable
 `,
 }
