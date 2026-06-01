@@ -144,11 +144,15 @@ Usage:
   note-searcher get <path> [<path> ...] [flags]
 
 Modes (flags):
-  (no flag)           Full document content
-  --metadata-only     Frontmatter/metadata only, no body
-  --titles-only       Document title(s) only
-  --section <heading> Content under a specific heading
-  --find <term>       Sections containing the term
+  (no flag)                    Full document content (frontmatter + body)
+  --metadata-only              Frontmatter/metadata only, no body
+  --titles-only                Heading structure only (H1-H6 with sequential IDs)
+  --section <id>               Content of a specific section (e.g. h3)
+  --section-search <term>      All sections containing the term (case-insensitive)
+
+Output flags:
+  --format             Output format: json or text (default: json)
+  --pretty             Pretty-print JSON output
 
 Multiple files:
   Pass multiple paths to retrieve several documents in one call.
@@ -156,9 +160,10 @@ Multiple files:
 
 Examples:
   note-searcher get notes/deployment.md
-  note-searcher get notes/deployment.md --section "Rollback"
-  note-searcher get notes/deployment.md --find "canary"
+  note-searcher get notes/deployment.md --section h3
+  note-searcher get notes/deployment.md --section-search "rollback"
   note-searcher get notes/a.md notes/b.md --metadata-only
+  note-searcher get notes/deployment.md --titles-only
 `,
 
 	"syntax": `syntax — Bleve query string syntax reference
