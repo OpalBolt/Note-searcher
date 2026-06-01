@@ -146,13 +146,15 @@ Query syntax: Bleve query strings (see: guide syntax)
 Usage:
   note-searcher search <query> [flags]
 
+Results are sorted by relevance score (highest first). Use --limit to
+cap the number of results returned.
+
 Flags:
-  --limit N            Maximum number of results (0 = no limit)
+  --limit N            Return top N results sorted by relevance (0 = no limit)
   --snippet            Include a text snippet from each result (default: on)
-  --snippet-size N     Snippet length in characters; implies --snippet
+  --snippet-size N     Snippet length in characters; implies --snippet (default 150)
   --sections           Include heading structure in results
   --score              Include relevance score in output
-  --sort <field>       Sort by field (e.g. date, title)
   --all                Include deprecated and superseded documents
   --format             Output format: json or text (default: json)
   --pretty             Pretty-print JSON output

@@ -61,10 +61,10 @@ func init() {
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
 	searchCmd.Flags().Bool("snippet", true, "Include a content excerpt around the match (default: on)")
+	searchCmd.Flags().Int("snippet-size", 0, "Snippet length in characters; implies --snippet (default 150 when --snippet is used alone)")
 	searchCmd.Flags().Bool("score", false, "Include relevance score in output")
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
-	searchCmd.Flags().String("format", "json", "Output format: json or text")
-	searchCmd.Flags().Int("limit", 0, "top N results by relevance score (0 = no limit)")
+	searchCmd.Flags().Int("limit", 0, "Return top N results sorted by relevance (0 = no limit)")
 	searchCmd.Flags().Bool("sections", false, "Include heading structure in search results")
 	probeCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 
