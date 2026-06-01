@@ -43,7 +43,7 @@ var probeCmd = &cobra.Command{
 var getCmd = &cobra.Command{
 	Use:   "get <path>...",
 	Short: "Retrieve note content by file path",
-	Args:  cobra.MinimumNArgs(1),
+	Args:  cobra.ArbitraryArgs,
 	RunE:  runGet,
 }
 
@@ -60,8 +60,7 @@ func init() {
 
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
-	searchCmd.Flags().Bool("snippet", false, "Include a content excerpt around the match")
-	searchCmd.Flags().Int("snippet-size", 0, "Snippet length in characters; implies --snippet (default 150 when --snippet is used alone)")
+	searchCmd.Flags().Bool("snippet", true, "Include a content excerpt around the match (default: on)")
 	searchCmd.Flags().Bool("score", false, "Include relevance score in output")
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 	searchCmd.Flags().String("format", "json", "Output format: json or text")
@@ -77,6 +76,7 @@ func init() {
 	getCmd.Flags().Bool("titles-only", false, "Return heading structure only (H1-H6 with sequential IDs)")
 	getCmd.Flags().String("section", "", "Return content of section with given ID (e.g. h3)")
 	getCmd.Flags().String("section-search", "", "Return all sections containing the given term (case-insensitive)")
+	getCmd.Flags().StringSlice("by-path", nil, "Retrieve document(s) by full file path (repeatable)")
 
 	// Bind persistent flags to viper
 	_ = viper.BindPFlag("notes-dir", rootCmd.PersistentFlags().Lookup("notes-dir"))
@@ -267,7 +267,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 	titlesOnly, _ := cmd.Flags().GetBool("titles-only")
 	section, _ := cmd.Flags().GetString("section")
 	sectionSearch, _ := cmd.Flags().GetString("section-search")
-
+	byPaths, _ := cmd.Flags().GetStringSlice("by-path")
+	
+	allPaths := append(args, byPaths...)
+	if len(allPaths) == 0 {
+		return fmt.Errorf("at least one path argument or --by-path flag is required")
+	}
 	if full && metadataOnly {
 		return fmt.Errorf("--full and --metadata-only are mutually exclusive")
 	}
@@ -293,14 +298,14 @@ func runGet(cmd *cobra.Command, args []string) error {
 		SectionSearchTerm string              `json:"section_search_term,omitempty"`
 	}
 
-	results := make([]getResult, 0, len(args))
+	results := make([]getResult, 0, len(allPaths))
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	indexer := index.NewBleveIndexer(cfg.IndexPath)
-	for _, path := range args {
+	for _, path := range allPaths {
 		resolvedPath := path
 		// If path looks like an ID prefix (no path separator, hex chars only, length <= 64)
 		if !strings.Contains(path, "/") && !strings.Contains(path, "\\") && isHexString(path) {

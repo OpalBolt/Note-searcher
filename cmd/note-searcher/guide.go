@@ -10,14 +10,30 @@ import (
 
 var guideCmd = &cobra.Command{
 	Use:   "guide [topic]",
-	Short: "Show usage guidance for AI agents and humans",
+	Short: "Show full usage guide, or a specific topic",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runGuide,
 }
 
 func runGuide(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
-		fmt.Print(topicIndex)
+		// Print all topics in sequence with headers
+		fmt.Println("note-searcher guide")
+		fmt.Println("===================")
+		fmt.Println("Run `note-searcher guide <topic>` for a specific topic.")
+		fmt.Println()
+
+		// Print topics in order: workflow, probe, search, get, syntax
+		topicOrder := []string{"workflow", "probe", "search", "get", "syntax"}
+		for _, topic := range topicOrder {
+			content, exists := topics[topic]
+			if exists {
+				fmt.Println(topic)
+				fmt.Println(strings.Repeat("-", len(topic)))
+				fmt.Print(content)
+				fmt.Println()
+			}
+		}
 		return nil
 	}
 
@@ -35,17 +51,6 @@ func runGuide(cmd *cobra.Command, args []string) error {
 	fmt.Print(content)
 	return nil
 }
-
-var topicIndex = `Available guide topics:
-
-  workflow  Recommended step-by-step usage (start here)
-  probe     How to use probe to explore the corpus
-  search    Query syntax, flags, and filtering
-  get       Retrieving full or partial document content
-  syntax    Bleve query string syntax reference
-
-Run: note-searcher guide <topic>
-`
 
 var topics = map[string]string{
 	"workflow": `Workflow: probe (wide) -> probe (tighter) xN -> search -> get
