@@ -110,17 +110,21 @@ Usage:
   note-searcher search <query> [flags]
 
 Flags:
-  --limit N       Maximum number of results (default: 10)
-  --snippet       Include a text snippet from each result
-  --score         Include relevance score in output
-  --sort <field>  Sort by field (e.g. date, title)
-  --all           Include deprecated and superseded documents
-  --format        Output format: json or text (default: text)
+  --limit N            Maximum number of results (0 = no limit)
+  --snippet            Include a text snippet from each result (default 150 chars)
+  --snippet-size N     Snippet length in characters; implies --snippet
+  --sections           Include heading structure in results
+  --score              Include relevance score in output
+  --sort <field>       Sort by field (e.g. date, title)
+  --all                Include deprecated and superseded documents
+  --format             Output format: json or text (default: json)
+  --pretty             Pretty-print JSON output
 
 Queryable fields:
   title, tags, author, type, year, status, path
 
 Default behaviour:
+  Output is JSON. Use --format=text for human-readable output.
   Documents with status:deprecated or status:superseded are excluded.
   Use --all to include them.
 
@@ -130,6 +134,8 @@ Examples:
   note-searcher search "deployment pipeline"
   note-searcher search "tags:devops year:2024" --limit 20 --snippet
   note-searcher search "author:alice" --sort date --score
+  note-searcher search "kubernetes" --snippet-size 300 --sections
+  note-searcher search "deployment" --format=text --pretty
 `,
 
 	"get": `get — Retrieve document content
