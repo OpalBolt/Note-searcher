@@ -60,7 +60,7 @@ func init() {
 
 	// search-specific flags
 	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
-	searchCmd.Flags().Bool("snippet", true, "Include a content excerpt around the match (default: on)")
+	searchCmd.Flags().Bool("snippet", false, "Include a content excerpt around the match")
 	searchCmd.Flags().Int("snippet-size", 0, "Snippet length in characters; implies --snippet (default 150 when --snippet is used alone)")
 	searchCmd.Flags().Bool("score", false, "Include relevance score in output")
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
@@ -268,7 +268,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	section, _ := cmd.Flags().GetString("section")
 	sectionSearch, _ := cmd.Flags().GetString("section-search")
 	byPaths, _ := cmd.Flags().GetStringSlice("by-path")
-	
+
 	allPaths := append(args, byPaths...)
 	if len(allPaths) == 0 {
 		return fmt.Errorf("at least one path argument or --by-path flag is required")

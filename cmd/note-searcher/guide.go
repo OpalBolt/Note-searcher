@@ -77,7 +77,7 @@ Step 2 -- probe tighter (repeat as needed)
 
 Step 3 -- search
   note-searcher search <refined-query> [--limit N] [--score]
-  Returns: matching documents with paths, titles, metadata, snippets.
+  Returns: matching documents with paths, titles, metadata.
   Use the query you refined through probing.
 
 Step 4 -- get
@@ -151,7 +151,7 @@ cap the number of results returned.
 
 Flags:
   --limit N            Return top N results sorted by relevance (0 = no limit)
-  --snippet            Include a text snippet from each result (default: on)
+  --snippet            Include a text snippet from each result
   --snippet-size N     Snippet length in characters; implies --snippet (default 150)
   --sections           Include heading structure in results
   --score              Include relevance score in output
