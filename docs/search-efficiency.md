@@ -5,6 +5,37 @@ Full corpus if read: ~400,000 tokens. Context windows top out at 128k–200k. Re
 
 ---
 
+## Query operator mental model
+
+Before running probes, understand how operators affect result counts:
+
+| Operator | Meaning | Effect on `total_matches` |
+|----------|---------|--------------------------|
+| `+term`  | Filter — document **must** contain this word | Decreases (narrows) |
+| `term`   | Boost — nice to have, affects ranking only | May **increase** or stay flat |
+| `-term`  | Exclude — document must **not** contain this word | Decreases (narrows) |
+
+**Key consequence:** `dns +kubernetes` returns every kubernetes doc — `dns` only boosts score, it does not filter. Use `+dns +kubernetes` to require both terms.
+
+## 5-step probe strategy
+
+```
+1. EXPLORE  — bare terms to discover vocabulary from facet counts
+              (doesn't filter, shows full landscape)
+2. SWITCH   — once facets confirm a word exists in the corpus, move to + mode
+3. DRILL    — add +terms one at a time, watch total_matches fall
+4. STOP     — when total_matches < 50, move to search
+5. EXCLUDE  — use -term to cut a dominant irrelevant domain (e.g. -azure)
+              when one topic floods facets and you can't drill past it
+```
+
+**Canonical example:**
+```bash
+note-searcher probe "dns"                              # EXPLORE — see facets
+note-searcher probe "+dns +kubernetes"                 # DRILL — 293 matches
+note-searcher probe "+dns +kubernetes +troubleshoot"   # DRILL — 30 matches → ready
+note-searcher search "+dns +kubernetes +troubleshoot"  # search
+```
 ## How AI tools normally search large corpora
 
 Most AI coding tools (Cursor, Copilot, etc.) approach large file sets in one of two ways:

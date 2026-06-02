@@ -61,9 +61,10 @@ Step 1 -- probe wide
 
 Step 2 -- probe tighter (repeat as needed)
   note-searcher probe <narrower-query>
-  Add field filters to reduce total_matches. Repeat until total_matches
-  is in a manageable range (typically < 50). Use facet values from the
-  previous probe to build the next query.
+  Use +term to filter and reduce total_matches (bare terms only boost score,
+  they do not narrow results). Repeat until total_matches is in a manageable
+  range (typically < 50). Use facet values from the previous probe to build
+  the next query.
 
   When to stop probing:
   - total_matches is small enough to search directly
@@ -74,6 +75,8 @@ Step 2 -- probe tighter (repeat as needed)
   - Decreases when you add a term: good, the term is narrowing the set.
   - Increases when you add a term: the term is too broad or absent from
     the corpus -- drop it and try a different angle.
+  - Note: adding a bare term (no +) may *increase* total_matches -- it boosts
+    ranking but does not filter.
 
 Step 3 -- search
   note-searcher search <refined-query> [--limit N] [--score]
@@ -90,9 +93,10 @@ Notes:
   - Skip probing if you already know what you want
 
 Example end-to-end:
-  note-searcher probe "kubernetes rolling update"        # wide: 800 matches
-  note-searcher probe "title:rolling update deployment"  # tighter: 45 matches
-  note-searcher search "title:rolling update deployment" # get results
+  note-searcher probe "dns"                              # EXPLORE: see facets
+  note-searcher probe "+dns +kubernetes"                 # DRILL: 293 matches
+  note-searcher probe "+dns +kubernetes +troubleshoot"   # DRILL: 30 matches -- ready
+  note-searcher search "+dns +kubernetes +troubleshoot"  # get results
   note-searcher get <id>                                 # retrieve full content
 `,
 
