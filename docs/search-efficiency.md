@@ -36,6 +36,7 @@ note-searcher probe "+dns +kubernetes"                 # DRILL — 293 matches
 note-searcher probe "+dns +kubernetes +troubleshoot"   # DRILL — 30 matches → ready
 note-searcher search "+dns +kubernetes +troubleshoot"  # search
 ```
+
 ## How AI tools normally search large corpora
 
 Most AI coding tools (Cursor, Copilot, etc.) approach large file sets in one of two ways:
