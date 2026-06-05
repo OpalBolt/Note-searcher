@@ -57,13 +57,15 @@ var topics = map[string]string{
 Step 1 -- probe wide
   note-searcher probe <broad-query>
   Returns: total_matches + facet counts (tags, types, years, authors).
-  Goal: understand the shape of the corpus. No documents returned.
+  Goal: understand the shape of the corpus. Use 1 bare term, 2 at most --
+  never start with a long multi-term query. No documents returned.
 
 Step 2 -- probe tighter (repeat as needed)
   note-searcher probe <narrower-query>
-  Add field filters to reduce total_matches. Repeat until total_matches
-  is in a manageable range (typically < 50). Use facet values from the
-  previous probe to build the next query.
+  Use +term to filter and reduce total_matches (bare terms only boost score,
+  they do not narrow results). Repeat until total_matches is in a manageable
+  range (typically < 50). Use facet values from the previous probe to build
+  the next query.
 
   When to stop probing:
   - total_matches is small enough to search directly
@@ -74,15 +76,29 @@ Step 2 -- probe tighter (repeat as needed)
   - Decreases when you add a term: good, the term is narrowing the set.
   - Increases when you add a term: the term is too broad or absent from
     the corpus -- drop it and try a different angle.
+  - Note: adding a bare term (no +) may *increase* total_matches -- it boosts
+    ranking but does not filter.
+
+Probe strategy: EXPLORE -> DRILL -> STOP
+  1. EXPLORE  -- start with 1 bare term, 2 at most. Never start with a long
+                 multi-term query -- the result set will be far too wide.
+                 Bare terms don't filter; use them only to discover vocabulary
+                 from facet counts.
+  2. SWITCH   -- once facets reveal a word that exists in the corpus, move to
+                 + mode immediately.
+  3. DRILL    -- lock in known terms with +, add one at a time, watch
+                 total_matches fall.
+  4. STOP     -- when total_matches < 50, move to search.
+  5. EXCLUDE  -- use -term to cut a dominant irrelevant domain (e.g. -azure)
+                 when one topic floods facets and you can't drill past it.
 
 Step 3 -- search
   note-searcher search <refined-query> [--limit N] [--score]
-  Returns: matching documents with paths, titles, metadata.
-  Use the query you refined through probing.
+  Returns: matching documents with id fields. Use id with get.
 
 Step 4 -- get
-  note-searcher get <path> [--section <id>] [--section-search <term>]
-  Retrieve full content or a specific section of a document.
+  note-searcher get <id> [--section <id>] [--section-search <term>]
+  Retrieve full content or a specific section of a document by id.
 
 Notes:
   - All filtering uses Bleve query string syntax (see: guide syntax)
@@ -90,10 +106,12 @@ Notes:
   - Skip probing if you already know what you want
 
 Example end-to-end:
-  note-searcher probe "kubernetes rolling update"        # wide: 800 matches
-  note-searcher probe "title:rolling update deployment"  # tighter: 45 matches
-  note-searcher search "title:rolling update deployment" # get results
-  note-searcher get <id>                                 # retrieve full content
+  note-searcher probe "ACI"                                 # EXPLORE: 1 term, see facets
+  note-searcher probe "+ACI +azure"                        # SWITCH to + immediately
+  note-searcher probe "+ACI +azure +migration"             # DRILL: add one at a time
+  note-searcher probe "+ACI +azure +migration +containers" # DRILL: keep going
+  note-searcher search "+ACI +azure +migration +containers" # < 50 matches: search
+  note-searcher get <id>                                    # retrieve full content by id
 `,
 
 	"probe": `probe -- Explore the corpus with facet counts
