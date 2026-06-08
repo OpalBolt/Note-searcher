@@ -123,7 +123,6 @@ func runIndex(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-
 // buildFilteredResult constructs a map with only the requested fields.
 // Always includes "id". Headings are included if non-empty.
 func buildFilteredResult(r index.SearchResult, fieldsSet map[string]bool, headings []get.Heading) map[string]interface{} {
@@ -151,8 +150,6 @@ func buildFilteredResult(r index.SearchResult, fieldsSet map[string]bool, headin
 	}
 	return m
 }
-
-
 
 func runSearch(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
@@ -327,9 +324,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		} else {
 			// Field filtering: use map[string]interface{} for flexible output
 			type scoreOutFiltered struct {
-				Total   int                     `json:"total"`
-				Shown   int                     `json:"shown"`
-				Query   string                  `json:"query"`
+				Total   int                      `json:"total"`
+				Shown   int                      `json:"shown"`
+				Query   string                   `json:"query"`
 				Results []map[string]interface{} `json:"results"`
 			}
 			sout := scoreOutFiltered{
@@ -386,9 +383,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	} else {
 		// Field filtering: use map[string]interface{} for flexible output
 		type searchOutFiltered struct {
-			Total   int                     `json:"total"`
-			Shown   int                     `json:"shown"`
-			Query   string                  `json:"query"`
+			Total   int                      `json:"total"`
+			Shown   int                      `json:"shown"`
+			Query   string                   `json:"query"`
 			Results []map[string]interface{} `json:"results"`
 		}
 		out := searchOutFiltered{
