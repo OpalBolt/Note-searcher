@@ -66,6 +66,8 @@ func init() {
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 	searchCmd.Flags().Int("limit", 0, "Return top N results sorted by relevance (0 = no limit)")
 	searchCmd.Flags().Bool("sections", false, "Include heading structure in search results")
+	searchCmd.Flags().String("fields", "", "Comma-separated fields to include alongside id and title (e.g. status,chars). id and title are always returned. Valid: status,domain,tags,chars,snippet,path. Applies to JSON output only.")
+	searchCmd.Flags().Bool("chars", false, "Include character count (chars) in output")
 	probeCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 
 	// get-specific flags
@@ -121,6 +123,34 @@ func runIndex(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// buildFilteredResult constructs a map with only the requested fields.
+// Always includes "id". Headings are included if non-empty.
+func buildFilteredResult(r index.SearchResult, fieldsSet map[string]bool, headings []get.Heading) map[string]interface{} {
+	m := map[string]interface{}{"id": r.ID, "title": r.Title}
+	if fieldsSet["status"] {
+		m["status"] = r.Status
+	}
+	if fieldsSet["domain"] {
+		m["domain"] = r.Domain
+	}
+	if fieldsSet["tags"] {
+		m["tags"] = r.Tags
+	}
+	if fieldsSet["chars"] {
+		m["chars"] = r.Chars
+	}
+	if fieldsSet["snippet"] {
+		m["snippet"] = r.Snippet
+	}
+	if fieldsSet["path"] {
+		m["path"] = r.Path
+	}
+	if len(headings) > 0 {
+		m["headings"] = headings
+	}
+	return m
+}
+
 func runSearch(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -143,6 +173,52 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	score, _ := cmd.Flags().GetBool("score")
 	sections, _ := cmd.Flags().GetBool("sections")
 
+	fieldsRaw, _ := cmd.Flags().GetString("fields")
+	charsFlag, _ := cmd.Flags().GetBool("chars")
+
+	validFieldNames := []string{"status", "domain", "tags", "chars", "snippet", "path"}
+
+	// Parse --fields into a set, validate, handle implications
+	var fieldsSet map[string]bool
+	if fieldsRaw != "" {
+		fieldsSet = make(map[string]bool)
+		for _, f := range strings.Split(fieldsRaw, ",") {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				continue
+			}
+			valid := false
+			for _, vf := range validFieldNames {
+				if f == vf {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return fmt.Errorf("unknown field %q: valid fields are: %s", f, strings.Join(validFieldNames, ", "))
+			}
+			fieldsSet[f] = true
+		}
+		// Treat empty --fields="" as nil (no filtering)
+		if len(fieldsSet) == 0 {
+			fieldsSet = nil
+		}
+	}
+	// snippet in --fields implies --snippet
+	if fieldsSet != nil && fieldsSet["snippet"] {
+		snippet = true
+	}
+	// --snippet or --snippet-size implies adding snippet to fields if fieldsSet is active
+	if (snippet || snippetSize > 0) && fieldsSet != nil {
+		fieldsSet["snippet"] = true
+	}
+	// --chars flag implies chars in output (always creates fieldsSet if needed)
+	if charsFlag {
+		if fieldsSet == nil {
+			fieldsSet = make(map[string]bool)
+		}
+		fieldsSet["chars"] = true
+	}
 	indexer := index.NewBleveIndexer(cfg.IndexPath)
 	resp, err := indexer.Search(queryStr, all, limit, snippet, snippetSize)
 	if err != nil {
@@ -200,30 +276,134 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 	}
 	if score {
-		// Encode SearchResponse directly to include score
-		return enc.Encode(resp)
+		if fieldsSet == nil {
+			// No field filtering: use full scoreResultOut struct
+			type scoreResultOut struct {
+				ID      string         `json:"id"`
+				Path    string         `json:"path,omitempty"`
+				Title   string         `json:"title"`
+				Status  string         `json:"status"`
+				Domain  []string       `json:"domain"`
+				Tags    []string       `json:"tags"`
+				Chars   int            `json:"chars"`
+				Snippet string         `json:"snippet,omitempty"`
+				Matches map[string]int `json:"matches,omitempty"`
+				Score   float64        `json:"score"`
+			}
+			type scoreOut struct {
+				Total   int              `json:"total"`
+				Shown   int              `json:"shown"`
+				Query   string           `json:"query"`
+				Results []scoreResultOut `json:"results"`
+			}
+			sout := scoreOut{
+				Total:   resp.Total,
+				Shown:   resp.Shown,
+				Query:   resp.Query,
+				Results: make([]scoreResultOut, len(resp.Results)),
+			}
+			for i, r := range resp.Results {
+				result := scoreResultOut{
+					ID:      r.ID,
+					Title:   r.Title,
+					Status:  r.Status,
+					Domain:  r.Domain,
+					Tags:    r.Tags,
+					Chars:   r.Chars,
+					Snippet: r.Snippet,
+					Matches: r.Matches,
+					Score:   r.Score,
+				}
+				if headings, ok := headingsMap[r.Path]; ok {
+					// Note: headings not included in score path (not part of scoreResultOut struct)
+					_ = headings
+				}
+				sout.Results[i] = result
+			}
+			return enc.Encode(sout)
+		} else {
+			// Field filtering: use map[string]interface{} for flexible output
+			type scoreOutFiltered struct {
+				Total   int                      `json:"total"`
+				Shown   int                      `json:"shown"`
+				Query   string                   `json:"query"`
+				Results []map[string]interface{} `json:"results"`
+			}
+			sout := scoreOutFiltered{
+				Total:   resp.Total,
+				Shown:   resp.Shown,
+				Query:   resp.Query,
+				Results: make([]map[string]interface{}, len(resp.Results)),
+			}
+			for i, r := range resp.Results {
+				result := buildFilteredResult(r, fieldsSet, headingsMap[r.Path])
+				// Always include score when --score is set
+				result["score"] = r.Score
+				// Include matches if non-empty
+				if len(r.Matches) > 0 {
+					result["matches"] = r.Matches
+				}
+				sout.Results[i] = result
+			}
+			return enc.Encode(sout)
+		}
 	}
 	// Encode without score - build a wrapper with stripped results
-	type searchOut struct {
-		Total   int         `json:"total"`
-		Shown   int         `json:"shown"`
-		Query   string      `json:"query"`
-		Results []resultOut `json:"results"`
-	}
-	out := searchOut{
-		Total:   resp.Total,
-		Shown:   resp.Shown,
-		Query:   resp.Query,
-		Results: make([]resultOut, len(resp.Results)),
-	}
-	for i, r := range resp.Results {
-		result := resultOut{ID: r.ID, Title: r.Title, Status: r.Status, Domain: r.Domain, Tags: r.Tags, Chars: r.Chars, Snippet: r.Snippet, Matches: r.Matches}
-		if headings, ok := headingsMap[r.Path]; ok {
-			result.Headings = headings
+	if fieldsSet == nil {
+		// No field filtering: use full resultOut struct
+		type searchOut struct {
+			Total   int         `json:"total"`
+			Shown   int         `json:"shown"`
+			Query   string      `json:"query"`
+			Results []resultOut `json:"results"`
 		}
-		out.Results[i] = result
+		out := searchOut{
+			Total:   resp.Total,
+			Shown:   resp.Shown,
+			Query:   resp.Query,
+			Results: make([]resultOut, len(resp.Results)),
+		}
+		for i, r := range resp.Results {
+			result := resultOut{
+				ID:      r.ID,
+				Title:   r.Title,
+				Status:  r.Status,
+				Domain:  r.Domain,
+				Tags:    r.Tags,
+				Chars:   r.Chars,
+				Snippet: r.Snippet,
+				Matches: r.Matches,
+			}
+			if headings, ok := headingsMap[r.Path]; ok {
+				result.Headings = headings
+			}
+			out.Results[i] = result
+		}
+		return enc.Encode(out)
+	} else {
+		// Field filtering: use map[string]interface{} for flexible output
+		type searchOutFiltered struct {
+			Total   int                      `json:"total"`
+			Shown   int                      `json:"shown"`
+			Query   string                   `json:"query"`
+			Results []map[string]interface{} `json:"results"`
+		}
+		out := searchOutFiltered{
+			Total:   resp.Total,
+			Shown:   resp.Shown,
+			Query:   resp.Query,
+			Results: make([]map[string]interface{}, len(resp.Results)),
+		}
+		for i, r := range resp.Results {
+			result := buildFilteredResult(r, fieldsSet, headingsMap[r.Path])
+			// Include matches if non-empty
+			if len(r.Matches) > 0 {
+				result["matches"] = r.Matches
+			}
+			out.Results[i] = result
+		}
+		return enc.Encode(out)
 	}
-	return enc.Encode(out)
 }
 
 func runProbe(cmd *cobra.Command, args []string) error {

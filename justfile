@@ -1,6 +1,8 @@
 # note-searcher build targets
 # Run inside `nix develop`
 
+export GOTOOLCHAIN := "local"
+
 default:
     @just --list
 
