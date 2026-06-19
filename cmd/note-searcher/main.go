@@ -98,7 +98,7 @@ func init() {
 	probeCmd.Flags().String("tag", "", "Filter by tag")
 	probeCmd.Flags().String("domain", "", "Filter by domain")
 	probeCmd.Flags().Bool("superseded", false, "Include superseded documents")
-	probeCmd.Flags().Int("limit", 0, "Cap the candidate set before faceting (0 = no limit)")
+	probeCmd.Flags().Int("limit", 0, "Max values to return per facet, ordered by count desc (0 = no limit)")
 	probeCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 
 	// get-specific flags

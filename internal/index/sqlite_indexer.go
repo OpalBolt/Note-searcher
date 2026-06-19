@@ -439,7 +439,11 @@ ORDER BY d.path
 			continue
 		}
 		r.ID = fullID[:pfxLen]
-		r.Score = score
+		// FTS5 rank is negative BM25 (more negative = better match).
+		// Negate so higher score = more relevant. Zero when no query.
+		if score != 0 {
+			r.Score = -score
+		}
 		if query != "" && opts.Snippets {
 			// Extract context windows around query terms from raw body
 			r.Snippet = extractSnippetWindows(rawBody, query, snipChars)
@@ -601,13 +605,16 @@ WHERE f.docs_fts MATCH ? %s
 	} else {
 		idQuery = fmt.Sprintf(`SELECT d.id FROM docs d %s %s`, joins, where)
 		idArgs = args
-	}
-	if opts.Limit > 0 {
-		idQuery += fmt.Sprintf(" LIMIT %d", opts.Limit)
-	}
+}
 
 	// Wrap as CTE for facet queries
 	cte := "WITH candidates AS (" + idQuery + ")"
+
+	// Optional per-facet value cap, ordered by count descending
+	facetLimit := ""
+	if opts.Limit > 0 {
+		facetLimit = fmt.Sprintf(" ORDER BY COUNT(*) DESC LIMIT %d", opts.Limit)
+	}
 
 	facets := make(map[string]FacetCounts)
 
@@ -616,7 +623,7 @@ WHERE f.docs_fts MATCH ? %s
 		rows, err := db.Query(fmt.Sprintf(
 			`%s SELECT d.%s, COUNT(*) FROM docs d JOIN candidates c ON c.id = d.id
 			 WHERE d.%s IS NOT NULL AND d.%s != ''
-			 GROUP BY d.%s`, cte, field, field, field, field),
+			 GROUP BY d.%s%s`, cte, field, field, field, field, facetLimit),
 			idArgs...)
 		if err == nil {
 			for rows.Next() {
@@ -636,8 +643,8 @@ WHERE f.docs_fts MATCH ? %s
 	// Tags facet via junction table
 	tagFC := FacetCounts{}
 	rows, err := db.Query(fmt.Sprintf(
-		`%s SELECT t.tag, COUNT(*) FROM doc_tags t JOIN candidates c ON c.id = t.id GROUP BY t.tag`,
-		cte), idArgs...)
+		`%s SELECT t.tag, COUNT(*) FROM doc_tags t JOIN candidates c ON c.id = t.id GROUP BY t.tag%s`,
+		cte, facetLimit), idArgs...)
 	if err == nil {
 		for rows.Next() {
 			var k string
@@ -744,7 +751,7 @@ func (s *SQLiteIndexer) Context() (ContextResult, error) {
 	defer db.Close()
 
 	samples := make(map[string][]string)
-	for _, field := range []string{"status", "type", "confidence", "scope", "project"} {
+	for _, field := range []string{"status", "type", "scope", "project"} {
 		rows, err := db.Query(fmt.Sprintf(
 			`SELECT DISTINCT %s FROM docs WHERE %s IS NOT NULL AND %s != '' ORDER BY %s LIMIT 20`,
 			field, field, field, field))
@@ -804,7 +811,7 @@ func (s *SQLiteIndexer) Context() (ContextResult, error) {
 		},
 		"docs_columns": []string{
 			"id", "path", "title", "created", "updated",
-			"status", "confidence", "type", "scope", "project",
+			"status", "type", "scope", "project",
 			"source_agent", "source_artifact", "review_by",
 			"requires_human_review", "superseded_by", "is_superseded",
 			"line_count", "chars",
@@ -830,14 +837,18 @@ func (s *SQLiteIndexer) Context() (ContextResult, error) {
 			"name":        "probe [query]",
 			"description": "Facet counts over matching documents. No body text returned. Use before search to understand the distribution.",
 			"filter_flags": []string{"--status", "--confidence", "--type", "--scope", "--project", "--tag", "--domain", "--superseded"},
-			"other_flags":  []string{"--limit", "--pretty"},
+			"other_flags":  map[string]string{
+				"--limit N": "return only the top N values per facet, ordered by count descending",
+				"--pretty":  "pretty-print JSON output",
+			},
 		},
 		{
 			"name":        "search [query]",
 			"description": "Ranked full-text + metadata search. Default output: id + title only, max 50 results. IDs are short unique prefixes — use them with get.",
 			"filter_flags": []string{"--status", "--confidence", "--type", "--scope", "--project", "--tag", "--domain", "--superseded"},
 			"output_flags": map[string]string{
-				"--fields status,...": "add scalar columns: status,domain,tags,chars,score,confidence,type,scope,project",
+				"--fields status,...": "add scalar columns: status,domain,tags,chars,type,scope,project",
+				"--fields score":      "add BM25 relevance score (higher = more relevant; only meaningful when a query is given)",
 				"--headings":         "add H1-H6 heading list to each result",
 				"--snippets":         "add body excerpts (no query = start of file)",
 				"--snippet-size N":   "chars of context around each hit; implies --snippets and --fields snippet (default 150)",
