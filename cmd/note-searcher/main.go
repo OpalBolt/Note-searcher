@@ -17,18 +17,18 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "note-searcher",
 	Short: "Search and index your notes",
-	Long:  "note-searcher indexes markdown notes with Bleve and provides fast full-text and metadata search",
+	Long:  "note-searcher indexes markdown notes with SQLite FTS5 and provides fast full-text and metadata search",
 }
 
 var indexCmd = &cobra.Command{
 	Use:   "index",
-	Short: "Build the Bleve search index from the notes directory",
+	Short: "Build the SQLite FTS5 search index from the notes directory",
 	RunE:  runIndex,
 }
 
 var searchCmd = &cobra.Command{
 	Use:   "search [query]",
-	Short: "Search notes using Bleve query string syntax",
+	Short: "Search notes using full-text and metadata filters",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runSearch,
 }
@@ -47,27 +47,58 @@ var getCmd = &cobra.Command{
 	RunE:  runGet,
 }
 
+var contextCmd = &cobra.Command{
+	Use:   "context",
+	Short: "Output schema, sample field values, and workflow guide for LLM bootstrapping",
+	RunE:  runContext,
+}
+
+var sqlCmd = &cobra.Command{
+	Use:   "sql <query>",
+	Short: "Execute a read-only SELECT query against the notes database",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runSQL,
+}
+
 func init() {
 	rootCmd.AddCommand(indexCmd)
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.AddCommand(probeCmd)
 	rootCmd.AddCommand(getCmd)
+	rootCmd.AddCommand(contextCmd)
+	rootCmd.AddCommand(sqlCmd)
 	rootCmd.AddCommand(guideCmd)
 
 	// Persistent flags available to all subcommands
 	rootCmd.PersistentFlags().String("notes-dir", "./notes", "directory containing markdown notes")
-	rootCmd.PersistentFlags().String("index-path", "./.bleve", "path to the Bleve index directory")
+	rootCmd.PersistentFlags().String("index-path", "./notes.db", "path to the SQLite database")
 
 	// search-specific flags
-	searchCmd.Flags().Bool("all", false, "Include deprecated and superseded notes")
-	searchCmd.Flags().Bool("snippet", false, "Include a content excerpt around the match")
-	searchCmd.Flags().Int("snippet-size", 0, "Snippet length in characters; implies --snippet (default 150 when --snippet is used alone)")
-	searchCmd.Flags().Bool("score", false, "Include relevance score in output")
+	searchCmd.Flags().String("status", "", "Filter by status")
+	searchCmd.Flags().String("confidence", "", "Filter by confidence")
+	searchCmd.Flags().String("type", "", "Filter by type")
+	searchCmd.Flags().String("scope", "", "Filter by scope")
+	searchCmd.Flags().String("project", "", "Filter by project")
+	searchCmd.Flags().String("tag", "", "Filter by tag")
+	searchCmd.Flags().String("domain", "", "Filter by domain")
+	searchCmd.Flags().Bool("superseded", false, "Include superseded documents")
+	searchCmd.Flags().Int("limit", 50, "Return top N results (0 = no limit)")
+	searchCmd.Flags().String("fields", "", "Extra fields to include beyond id+title. Comma-separated: path,status,domain,tags,chars,snippet,score,confidence,type,scope,project")
+	searchCmd.Flags().Bool("snippets", false, "Include body excerpts in results")
+	searchCmd.Flags().Int("snippet-size", 0, "Characters of context around each hit; implies --snippets and --fields snippet (default 150 when set)")
+	searchCmd.Flags().Bool("headings", false, "Include heading structure (H1-H6) in each result")
 	searchCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
-	searchCmd.Flags().Int("limit", 0, "Return top N results sorted by relevance (0 = no limit)")
-	searchCmd.Flags().Bool("sections", false, "Include heading structure in search results")
-	searchCmd.Flags().String("fields", "", "Comma-separated fields to include alongside id and title (e.g. status,chars). id and title are always returned. Valid: status,domain,tags,chars,snippet,path. Applies to JSON output only.")
-	searchCmd.Flags().Bool("chars", false, "Include character count (chars) in output")
+
+	// probe-specific flags
+	probeCmd.Flags().String("status", "", "Filter by status")
+	probeCmd.Flags().String("confidence", "", "Filter by confidence")
+	probeCmd.Flags().String("type", "", "Filter by type")
+	probeCmd.Flags().String("scope", "", "Filter by scope")
+	probeCmd.Flags().String("project", "", "Filter by project")
+	probeCmd.Flags().String("tag", "", "Filter by tag")
+	probeCmd.Flags().String("domain", "", "Filter by domain")
+	probeCmd.Flags().Bool("superseded", false, "Include superseded documents")
+	probeCmd.Flags().Int("limit", 0, "Cap the candidate set before faceting (0 = no limit)")
 	probeCmd.Flags().Bool("pretty", false, "Pretty-print JSON output (human-readable)")
 
 	// get-specific flags
@@ -80,6 +111,10 @@ func init() {
 	getCmd.Flags().String("section-search", "", "Return all sections containing the given term (case-insensitive)")
 	getCmd.Flags().StringSlice("by-path", nil, "Retrieve document(s) by full file path (repeatable)")
 
+	// context and sql flags
+	contextCmd.Flags().Bool("pretty", false, "Pretty-print JSON output")
+	sqlCmd.Flags().Bool("pretty", false, "Pretty-print JSON output")
+
 	// Bind persistent flags to viper
 	_ = viper.BindPFlag("notes-dir", rootCmd.PersistentFlags().Lookup("notes-dir"))
 	_ = viper.BindPFlag("index-path", rootCmd.PersistentFlags().Lookup("index-path"))
@@ -89,7 +124,7 @@ func init() {
 
 func setupViper() {
 	viper.SetDefault("notes-dir", "./notes")
-	viper.SetDefault("index-path", "./.bleve")
+	viper.SetDefault("index-path", "./notes.db")
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
@@ -113,7 +148,7 @@ func runIndex(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	indexer := index.NewBleveIndexer(cfg.IndexPath)
+	indexer := index.NewSQLiteIndexer(cfg.IndexPath)
 	stats, err := indexer.Build(cfg.NotesDir)
 	if err != nil {
 		return fmt.Errorf("build index: %w", err)
@@ -121,34 +156,6 @@ func runIndex(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Indexed %d files, index size %d KB\n", stats.FileCount, stats.IndexBytes/1024)
 	return nil
-}
-
-// buildFilteredResult constructs a map with only the requested fields.
-// Always includes "id". Headings are included if non-empty.
-func buildFilteredResult(r index.SearchResult, fieldsSet map[string]bool, headings []get.Heading) map[string]interface{} {
-	m := map[string]interface{}{"id": r.ID, "title": r.Title}
-	if fieldsSet["status"] {
-		m["status"] = r.Status
-	}
-	if fieldsSet["domain"] {
-		m["domain"] = r.Domain
-	}
-	if fieldsSet["tags"] {
-		m["tags"] = r.Tags
-	}
-	if fieldsSet["chars"] {
-		m["chars"] = r.Chars
-	}
-	if fieldsSet["snippet"] {
-		m["snippet"] = r.Snippet
-	}
-	if fieldsSet["path"] {
-		m["path"] = r.Path
-	}
-	if len(headings) > 0 {
-		m["headings"] = headings
-	}
-	return m
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -162,248 +169,143 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		queryStr = args[0]
 	}
 
-	all, _ := cmd.Flags().GetBool("all")
-	snippet, _ := cmd.Flags().GetBool("snippet")
-	snippetSize, _ := cmd.Flags().GetInt("snippet-size")
-	if snippetSize > 0 {
-		snippet = true
-	}
-	format, _ := cmd.Flags().GetString("format")
+	// Get flags
+	snippets, _ := cmd.Flags().GetBool("snippets")
+	status, _ := cmd.Flags().GetString("status")
+	confidence, _ := cmd.Flags().GetString("confidence")
+	typeFilter, _ := cmd.Flags().GetString("type")
+	scope, _ := cmd.Flags().GetString("scope")
+	project, _ := cmd.Flags().GetString("project")
+	tag, _ := cmd.Flags().GetString("tag")
+	domain, _ := cmd.Flags().GetString("domain")
+	superseded, _ := cmd.Flags().GetBool("superseded")
 	limit, _ := cmd.Flags().GetInt("limit")
-	score, _ := cmd.Flags().GetBool("score")
-	sections, _ := cmd.Flags().GetBool("sections")
-
+	snippetSize, _ := cmd.Flags().GetInt("snippet-size")
+	headings, _ := cmd.Flags().GetBool("headings")
+	pretty, _ := cmd.Flags().GetBool("pretty")
 	fieldsRaw, _ := cmd.Flags().GetString("fields")
-	charsFlag, _ := cmd.Flags().GetBool("chars")
 
-	validFieldNames := []string{"status", "domain", "tags", "chars", "snippet", "path"}
-
-	// Parse --fields into a set, validate, handle implications
-	var fieldsSet map[string]bool
+	// Parse --fields into a set
+	fieldsSet := make(map[string]bool)
+	validFields := map[string]bool{
+		"path": true, "status": true, "domain": true, "tags": true,
+		"chars": true, "snippet": true, "score": true,
+		"confidence": true, "type": true, "scope": true, "project": true,
+	}
 	if fieldsRaw != "" {
-		fieldsSet = make(map[string]bool)
 		for _, f := range strings.Split(fieldsRaw, ",") {
 			f = strings.TrimSpace(f)
 			if f == "" {
 				continue
 			}
-			valid := false
-			for _, vf := range validFieldNames {
-				if f == vf {
-					valid = true
-					break
-				}
-			}
-			if !valid {
-				return fmt.Errorf("unknown field %q: valid fields are: %s", f, strings.Join(validFieldNames, ", "))
+			if !validFields[f] {
+				return fmt.Errorf("unknown field %q: valid fields are path,status,domain,tags,chars,snippet,score,confidence,type,scope,project", f)
 			}
 			fieldsSet[f] = true
 		}
-		// Treat empty --fields="" as nil (no filtering)
-		if len(fieldsSet) == 0 {
-			fieldsSet = nil
-		}
 	}
-	// snippet in --fields implies --snippet
-	if fieldsSet != nil && fieldsSet["snippet"] {
-		snippet = true
+	// snippet in --fields implies --snippets
+	if fieldsSet["snippet"] {
+		snippets = true
 	}
-	// --snippet or --snippet-size implies adding snippet to fields if fieldsSet is active
-	if (snippet || snippetSize > 0) && fieldsSet != nil {
+	// --snippet-size implies --snippets and --fields snippet
+	if snippetSize > 0 {
+		snippets = true
 		fieldsSet["snippet"] = true
 	}
-	// --chars flag implies chars in output (always creates fieldsSet if needed)
-	if charsFlag {
-		if fieldsSet == nil {
-			fieldsSet = make(map[string]bool)
-		}
-		fieldsSet["chars"] = true
+
+	opts := index.SearchOptions{
+		Status:      status,
+		Confidence:  confidence,
+		Type:        typeFilter,
+		Scope:       scope,
+		Project:     project,
+		Tag:         tag,
+		Domain:      domain,
+		Superseded:  superseded,
+		Limit:       limit,
+		Snippets:    snippets,
+		SnippetSize: snippetSize,
 	}
-	indexer := index.NewBleveIndexer(cfg.IndexPath)
-	resp, err := indexer.Search(queryStr, all, limit, snippet, snippetSize)
+
+	indexer := index.NewSQLiteIndexer(cfg.IndexPath)
+	resp, err := indexer.Search(queryStr, opts)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
-	// Load headings for each result if sections flag is set
-	var headingsMap map[string][]get.Heading
-	if sections {
-		headingsMap = make(map[string][]get.Heading)
+
+	// Load headings for all results in one pass if requested
+	var headingsByPath map[string][]get.Heading
+	if headings && len(resp.Results) > 0 {
+		headingsByPath = make(map[string][]get.Heading)
 		for _, r := range resp.Results {
-			filePath := filepath.Join(cfg.NotesDir, filepath.FromSlash(r.Path))
-			raw, err := os.ReadFile(filePath)
-			if err != nil {
-				continue // non-fatal
+			body, err := indexer.GetBody(r.Path)
+			if err == nil && body != "" {
+				headingsByPath[r.Path] = get.ParseHeadings(body)
 			}
-			_, body, err := index.ParseFrontmatter(raw)
-			if err != nil {
-				continue // non-fatal
-			}
-			headingsMap[r.Path] = get.ParseHeadings(body)
 		}
 	}
 
-	if format == "text" {
-		fmt.Printf("Showing %d of %d results\n", resp.Shown, resp.Total)
-		for _, r := range resp.Results {
-			if score {
-				fmt.Printf("%s\t%s\t%s\t%d\t%.4f\n", r.Path, r.Title, r.Status, r.Chars, r.Score)
+	// Build filtered results: default = id + title only
+	type filteredResult = map[string]interface{}
+	var filtered []filteredResult
+	for _, r := range resp.Results {
+		m := filteredResult{"id": r.ID, "title": r.Title}
+		if fieldsSet["path"] {
+			m["path"] = r.Path
+		}
+		if fieldsSet["status"] {
+			m["status"] = r.Status
+		}
+		if fieldsSet["domain"] {
+			m["domain"] = r.Domain
+		}
+		if fieldsSet["tags"] {
+			m["tags"] = r.Tags
+		}
+		if fieldsSet["chars"] {
+			m["chars"] = r.Chars
+		}
+		if fieldsSet["snippet"] {
+			m["snippet"] = r.Snippet
+		}
+		if fieldsSet["score"] {
+			m["score"] = r.Score
+		}
+		if fieldsSet["confidence"] {
+			m["confidence"] = r.Confidence
+		}
+		if fieldsSet["type"] {
+			m["type"] = r.Type
+		}
+		if fieldsSet["scope"] {
+			m["scope"] = r.Scope
+		}
+		if fieldsSet["project"] {
+			m["project"] = r.Project
+		}
+		if headings {
+			if hs, ok := headingsByPath[r.Path]; ok {
+				m["headings"] = hs
 			} else {
-				fmt.Printf("%s\t%s\t%s\t%d\n", r.Path, r.Title, r.Status, r.Chars)
+				m["headings"] = []get.Heading{}
 			}
 		}
-		return nil
+		filtered = append(filtered, m)
 	}
 
-	// Strip score — output order already reflects relevance ranking
-	type resultOut struct {
-		ID       string         `json:"id"`
-		Path     string         `json:"path,omitempty"`
-		Title    string         `json:"title"`
-		Status   string         `json:"status"`
-		Domain   []string       `json:"domain"`
-		Tags     []string       `json:"tags"`
-		Chars    int            `json:"chars"`
-		Snippet  string         `json:"snippet,omitempty"`
-		Matches  map[string]int `json:"matches,omitempty"`
-		Headings []get.Heading  `json:"headings,omitempty"`
+	out := map[string]interface{}{
+		"total":   resp.Total,
+		"shown":   resp.Shown,
+		"query":   resp.Query,
+		"results": filtered,
 	}
-
-	// searchOut wraps search results with metadata about the query.
-	// Used when --score=false to exclude scores
 
 	enc := json.NewEncoder(os.Stdout)
-	if pretty, _ := cmd.Flags().GetBool("pretty"); pretty {
+	if pretty {
 		enc.SetIndent("", "  ")
 	}
-	if score {
-		if fieldsSet == nil {
-			// No field filtering: use full scoreResultOut struct
-			type scoreResultOut struct {
-				ID      string         `json:"id"`
-				Path    string         `json:"path,omitempty"`
-				Title   string         `json:"title"`
-				Status  string         `json:"status"`
-				Domain  []string       `json:"domain"`
-				Tags    []string       `json:"tags"`
-				Chars   int            `json:"chars"`
-				Snippet string         `json:"snippet,omitempty"`
-				Matches map[string]int `json:"matches,omitempty"`
-				Score   float64        `json:"score"`
-			}
-			type scoreOut struct {
-				Total   int              `json:"total"`
-				Shown   int              `json:"shown"`
-				Query   string           `json:"query"`
-				Results []scoreResultOut `json:"results"`
-			}
-			sout := scoreOut{
-				Total:   resp.Total,
-				Shown:   resp.Shown,
-				Query:   resp.Query,
-				Results: make([]scoreResultOut, len(resp.Results)),
-			}
-			for i, r := range resp.Results {
-				result := scoreResultOut{
-					ID:      r.ID,
-					Title:   r.Title,
-					Status:  r.Status,
-					Domain:  r.Domain,
-					Tags:    r.Tags,
-					Chars:   r.Chars,
-					Snippet: r.Snippet,
-					Matches: r.Matches,
-					Score:   r.Score,
-				}
-				if headings, ok := headingsMap[r.Path]; ok {
-					// Note: headings not included in score path (not part of scoreResultOut struct)
-					_ = headings
-				}
-				sout.Results[i] = result
-			}
-			return enc.Encode(sout)
-		} else {
-			// Field filtering: use map[string]interface{} for flexible output
-			type scoreOutFiltered struct {
-				Total   int                      `json:"total"`
-				Shown   int                      `json:"shown"`
-				Query   string                   `json:"query"`
-				Results []map[string]interface{} `json:"results"`
-			}
-			sout := scoreOutFiltered{
-				Total:   resp.Total,
-				Shown:   resp.Shown,
-				Query:   resp.Query,
-				Results: make([]map[string]interface{}, len(resp.Results)),
-			}
-			for i, r := range resp.Results {
-				result := buildFilteredResult(r, fieldsSet, headingsMap[r.Path])
-				// Always include score when --score is set
-				result["score"] = r.Score
-				// Include matches if non-empty
-				if len(r.Matches) > 0 {
-					result["matches"] = r.Matches
-				}
-				sout.Results[i] = result
-			}
-			return enc.Encode(sout)
-		}
-	}
-	// Encode without score - build a wrapper with stripped results
-	if fieldsSet == nil {
-		// No field filtering: use full resultOut struct
-		type searchOut struct {
-			Total   int         `json:"total"`
-			Shown   int         `json:"shown"`
-			Query   string      `json:"query"`
-			Results []resultOut `json:"results"`
-		}
-		out := searchOut{
-			Total:   resp.Total,
-			Shown:   resp.Shown,
-			Query:   resp.Query,
-			Results: make([]resultOut, len(resp.Results)),
-		}
-		for i, r := range resp.Results {
-			result := resultOut{
-				ID:      r.ID,
-				Title:   r.Title,
-				Status:  r.Status,
-				Domain:  r.Domain,
-				Tags:    r.Tags,
-				Chars:   r.Chars,
-				Snippet: r.Snippet,
-				Matches: r.Matches,
-			}
-			if headings, ok := headingsMap[r.Path]; ok {
-				result.Headings = headings
-			}
-			out.Results[i] = result
-		}
-		return enc.Encode(out)
-	} else {
-		// Field filtering: use map[string]interface{} for flexible output
-		type searchOutFiltered struct {
-			Total   int                      `json:"total"`
-			Shown   int                      `json:"shown"`
-			Query   string                   `json:"query"`
-			Results []map[string]interface{} `json:"results"`
-		}
-		out := searchOutFiltered{
-			Total:   resp.Total,
-			Shown:   resp.Shown,
-			Query:   resp.Query,
-			Results: make([]map[string]interface{}, len(resp.Results)),
-		}
-		for i, r := range resp.Results {
-			result := buildFilteredResult(r, fieldsSet, headingsMap[r.Path])
-			// Include matches if non-empty
-			if len(r.Matches) > 0 {
-				result["matches"] = r.Matches
-			}
-			out.Results[i] = result
-		}
-		return enc.Encode(out)
-	}
+	return enc.Encode(out)
 }
 
 func runProbe(cmd *cobra.Command, args []string) error {
@@ -417,10 +319,54 @@ func runProbe(cmd *cobra.Command, args []string) error {
 		queryStr = args[0]
 	}
 
-	indexer := index.NewBleveIndexer(cfg.IndexPath)
-	result, err := indexer.Probe(queryStr)
+	// Get flags
+	status, _ := cmd.Flags().GetString("status")
+	confidence, _ := cmd.Flags().GetString("confidence")
+	typeFilter, _ := cmd.Flags().GetString("type")
+	scope, _ := cmd.Flags().GetString("scope")
+	project, _ := cmd.Flags().GetString("project")
+	tag, _ := cmd.Flags().GetString("tag")
+	domain, _ := cmd.Flags().GetString("domain")
+	superseded, _ := cmd.Flags().GetBool("superseded")
+	limit, _ := cmd.Flags().GetInt("limit")
+	pretty, _ := cmd.Flags().GetBool("pretty")
+
+	// Build probe options
+	opts := index.ProbeOptions{
+		Status:     status,
+		Confidence: confidence,
+		Type:       typeFilter,
+		Scope:      scope,
+		Project:    project,
+		Tag:        tag,
+		Domain:     domain,
+		Superseded: superseded,
+		Limit:      limit,
+	}
+
+	indexer := index.NewSQLiteIndexer(cfg.IndexPath)
+	result, err := indexer.Probe(queryStr, opts)
 	if err != nil {
 		return fmt.Errorf("probe: %w", err)
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	if pretty {
+		enc.SetIndent("", "  ")
+	}
+	return enc.Encode(result)
+}
+
+func runContext(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	indexer := index.NewSQLiteIndexer(cfg.IndexPath)
+	result, err := indexer.Context()
+	if err != nil {
+		return fmt.Errorf("context: %w", err)
 	}
 
 	enc := json.NewEncoder(os.Stdout)
@@ -430,13 +376,23 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	return enc.Encode(result)
 }
 
-func isHexString(s string) bool {
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
+func runSQL(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
 	}
-	return len(s) > 0
+
+	indexer := index.NewSQLiteIndexer(cfg.IndexPath)
+	rows, err := indexer.SQL(args[0])
+	if err != nil {
+		return fmt.Errorf("sql: %w", err)
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	if pretty, _ := cmd.Flags().GetBool("pretty"); pretty {
+		enc.SetIndent("", "  ")
+	}
+	return enc.Encode(rows)
 }
 
 func runGet(cmd *cobra.Command, args []string) error {
@@ -449,9 +405,8 @@ func runGet(cmd *cobra.Command, args []string) error {
 	sectionSearch, _ := cmd.Flags().GetString("section-search")
 	byPaths, _ := cmd.Flags().GetStringSlice("by-path")
 
-	allPaths := append(args, byPaths...)
-	if len(allPaths) == 0 {
-		return fmt.Errorf("at least one path argument or --by-path flag is required")
+	if len(args) == 0 && len(byPaths) == 0 {
+		return fmt.Errorf("at least one ID argument or --by-path flag is required")
 	}
 	if full && metadataOnly {
 		return fmt.Errorf("--full and --metadata-only are mutually exclusive")
@@ -478,23 +433,43 @@ func runGet(cmd *cobra.Command, args []string) error {
 		SectionSearchTerm string              `json:"section_search_term,omitempty"`
 	}
 
-	results := make([]getResult, 0, len(allPaths))
+	results := make([]getResult, 0, len(args)+len(byPaths))
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	indexer := index.NewBleveIndexer(cfg.IndexPath)
-	for _, path := range allPaths {
-		resolvedPath := path
-		// If path looks like an ID prefix (no path separator, hex chars only, length <= 64)
-		if !strings.Contains(path, "/") && !strings.Contains(path, "\\") && isHexString(path) {
-			p, err := indexer.ResolveID(path)
-			if err != nil {
-				return fmt.Errorf("resolve id %q: %w", path, err)
-			}
-			resolvedPath = filepath.Join(cfg.NotesDir, filepath.FromSlash(p))
+	indexer := index.NewSQLiteIndexer(cfg.IndexPath)
+
+	// Prefer the notes dir stored in the DB during build over the config default.
+	// This means `get` works without re-specifying --notes-dir.
+	notesDir := indexer.ReadNotesDir()
+	if notesDir == "" {
+		notesDir = cfg.NotesDir
+	}
+
+	type target struct{ resolvedPath, label string }
+	var targets []target
+
+	for _, id := range args {
+		gr, err := indexer.Get(id)
+		if err != nil {
+			results = append(results, getResult{Path: id, Error: err.Error()})
+			continue
 		}
+		targets = append(targets, target{
+			resolvedPath: filepath.Join(notesDir, gr.Path),
+			label:        gr.Path,
+		})
+	}
+	for _, p := range byPaths {
+		targets = append(targets, target{resolvedPath: p, label: p})
+	}
+
+	for _, tgt := range targets {
+		path := tgt.label
+		resolvedPath := tgt.resolvedPath
+
 		raw, err := os.ReadFile(resolvedPath)
 		if err != nil {
 			errMsg := err.Error()
@@ -519,11 +494,15 @@ func runGet(cmd *cobra.Command, args []string) error {
 			r.Headings = get.ParseHeadings(body)
 		case section != "" || sectionSearch != "":
 			var secResults []get.SectionResult
+			headings := get.ParseHeadings(body)
+			lines := strings.Split(body, "\n")
+
 			if section != "" && sectionSearch != "" {
 				// union mode
 				secA, errA := get.ExtractSection(body, section)
-				secB, errB := get.ExtractSectionsContaining(body, sectionSearch)
-				if errA != nil && errB != nil {
+				secB := get.ExtractSectionsContaining(headings, lines, sectionSearch)
+
+				if errA != nil && len(secB) == 0 {
 					results = append(results, getResult{Path: path, Error: "section not found and term not found in any section"})
 					continue
 				}
@@ -531,8 +510,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 				if errA == nil {
 					aSlice = []get.SectionResult{secA}
 				}
-				if errB == nil {
-					headings := get.ParseHeadings(body)
+				if len(secB) > 0 {
 					secResults = get.UnionSections(aSlice, secB, headings)
 				} else {
 					secResults = aSlice
@@ -550,16 +528,19 @@ func runGet(cmd *cobra.Command, args []string) error {
 				r.Mode = "section"
 				r.SelectedSection = section
 			} else {
-				var err error
-				secResults, err = get.ExtractSectionsContaining(body, sectionSearch)
-				if err != nil {
-					results = append(results, getResult{Path: path, Error: "term not found in any section"})
+				headings := get.ParseHeadings(body)
+				lines := strings.Split(body, "\n")
+				secResults = get.ExtractSectionsContaining(headings, lines, sectionSearch)
+				if len(secResults) == 0 {
+					results = append(results, getResult{Path: path, Error: fmt.Sprintf("term %q not found in document", sectionSearch)})
 					continue
 				}
 				r.Mode = "section-search"
 				r.SectionSearchTerm = sectionSearch
 			}
-			r.Sections = secResults
+			if len(secResults) > 0 {
+				r.Sections = secResults
+			}
 		case metadataOnly:
 			r.Mode = "metadata-only"
 			r.Metadata = &fm

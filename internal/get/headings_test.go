@@ -337,9 +337,12 @@ func TestExtractSectionsContaining(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, err := ExtractSectionsContaining(tt.body, tt.term)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("wantErr %v, got %v", tt.wantErr, err != nil)
+			headings := ParseHeadings(tt.body)
+			lines := strings.Split(tt.body, "\n")
+			r := ExtractSectionsContaining(headings, lines, tt.term)
+			gotErr := len(r) == 0 && tt.wantErr
+			if tt.wantErr && !gotErr {
+				t.Errorf("wantErr %v, got results=%d", tt.wantErr, len(r))
 			}
 			if !tt.wantErr && tt.checks != nil {
 				tt.checks(t, r)
@@ -399,13 +402,12 @@ func TestUnionSections(t *testing.T) {
 			headings := ParseHeadings(tt.body)
 
 			var aSlice, bSlice []SectionResult
+			lines := strings.Split(tt.body, "\n")
 			for _, term := range tt.aTerms {
-				results, _ := ExtractSectionsContaining(tt.body, term)
-				aSlice = append(aSlice, results...)
+				aSlice = append(aSlice, ExtractSectionsContaining(headings, lines, term)...)
 			}
 			for _, term := range tt.bTerms {
-				results, _ := ExtractSectionsContaining(tt.body, term)
-				bSlice = append(bSlice, results...)
+				bSlice = append(bSlice, ExtractSectionsContaining(headings, lines, term)...)
 			}
 
 			merged := UnionSections(aSlice, bSlice, headings)
