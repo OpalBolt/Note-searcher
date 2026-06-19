@@ -101,7 +101,7 @@ Step 4 -- get
   Retrieve full content or a specific section of a document by id.
 
 Notes:
-  - All filtering uses Bleve query string syntax (see: guide syntax)
+	- All text filtering uses SQLite FTS5 MATCH syntax (see: guide syntax)
   - Deprecated and superseded notes are hidden by default; use --all to include them
   - Skip probing if you already know what you want
 
@@ -156,7 +156,7 @@ Examples:
   note-searcher probe "title:kubernetes deployment"
   note-searcher probe "title:kubernetes deployment" --pretty
 
-Query syntax: Bleve query strings (see: guide syntax)
+Query syntax: SQLite FTS5 MATCH syntax (see: guide syntax)
 `,
 
 	"search": `search -- Query documents and return results
@@ -191,7 +191,7 @@ Default behaviour:
   Documents with status:deprecated or status:superseded are excluded.
   Use --all to include them.
 
-All filtering uses Bleve query string syntax (see: guide syntax).
+All filtering uses SQLite FTS5 MATCH syntax (see: guide syntax).
 
 Examples:
   note-searcher search "deployment pipeline"
@@ -234,45 +234,38 @@ Examples:
   note-searcher get notes/deployment.md --titles-only
 `,
 
-	"syntax": `syntax -- Bleve query string syntax reference
+	"syntax": `syntax -- SQLite FTS5 MATCH syntax reference
 
-note-searcher uses Bleve query string syntax for all filtering.
-This applies to both probe and search.
+note-searcher uses SQLite FTS5 full-text search for the query argument
+in probe and search. Metadata filters (--status, --type, etc.) are
+separate flags and do not use this syntax.
 
 Basic terms:
   kubernetes              Match documents containing "kubernetes"
-  kubernetes deployment   Match documents containing both terms (AND)
-
-Required / excluded:
-  +kubernetes             Term MUST be present
-  -deprecated             Term MUST NOT be present
+  kubernetes deployment   Match documents containing both terms (implicit AND)
 
 Phrase search:
-  "rolling update"        Exact phrase match
+  "rolling update"        Exact phrase match (porter-stemmed)
 
-Field queries:
-  tags:devops             Field equals value
-  title:deployment        Match in title field
-  author:alice            Match by author
-  type:note               Match by document type
-  year:2024               Match by year
+OR / AND / NOT:
+  kubernetes OR docker    Either term
+  kubernetes AND docker   Both terms (same as space-separated)
+  kubernetes NOT docker   Kubernetes but not docker
 
-Wildcard:
-  deploy*                 Prefix match (deploy, deployment, deployer...)
-  tags:dev*               Prefix match on a field
+Prefix match:
+  deploy*                 Matches deploy, deployment, deployer...
 
-Fuzzy match:
-  kubernets~              Fuzzy match (typo tolerance, default edit distance 1)
-  kubernets~2             Fuzzy match with edit distance 2
+Column filtering:
+  title:deployment        Match "deployment" in the title field only
+  title:"rolling update"  Exact phrase in title only
 
 Combining:
-  +tags:devops -status:deprecated "rolling update"
-  kubernetes year:2024 author:alice
+  title:kubernetes deployment           Title contains kubernetes, body contains deployment
+  "rolling update" OR "blue green"       Either phrase
 
 Notes:
-  - Field names are lowercase
-  - Wildcards only supported as suffix (prefix wildcards not supported)
-  - Phrase search requires double quotes
-  - Prefer title: and full-text terms; metadata fields may be unreliable
+  - Tokenizer: porter ascii (English stemming, ASCII folding)
+  - Metadata filters (--status, --type, --tag etc.) are AND-combined with the FTS query
+  - Use the sql command for queries this syntax cannot express
 `,
 }
